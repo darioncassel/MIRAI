@@ -35,7 +35,7 @@ pub struct MirVisitorCrateContext<'a, 'b: 'a, 'tcx: 'b, E> {
     pub session: &'b Session,
     pub tcx: &'b TyCtxt<'b, 'tcx, 'tcx>,
     pub def_id: hir::def_id::DefId,
-    pub mir: &'a mir::Mir<'tcx>,
+    pub mir: &'a mir::Body<'tcx>,
     pub constant_value_cache: &'a mut ConstantValueCache<'tcx>,
     pub summary_cache: &'a mut PersistentSummaryCache<'b, 'tcx>,
     pub smt_solver: &'a mut dyn SmtSolver<E>,
@@ -47,7 +47,7 @@ pub struct MirVisitor<'a, 'b: 'a, 'tcx: 'b, E> {
     session: &'b Session,
     tcx: &'b TyCtxt<'b, 'tcx, 'tcx>,
     def_id: hir::def_id::DefId,
-    mir: &'a mir::Mir<'tcx>,
+    mir: &'a mir::Body<'tcx>,
     constant_value_cache: &'a mut ConstantValueCache<'tcx>,
     summary_cache: &'a mut PersistentSummaryCache<'b, 'tcx>,
     smt_solver: &'a mut dyn SmtSolver<E>,
@@ -2350,7 +2350,7 @@ impl<'a, 'b: 'a, 'tcx: 'b, E> MirVisitor<'a, 'b, 'tcx, E> {
         user_ty: Option<UserTypeAnnotationIndex>,
         literal: &mir::interpret::ConstValue<'tcx>,
     ) -> Rc<AbstractValue> {
-        use rustc::mir::interpret::{AllocKind, Scalar};
+        use rustc::mir::interpret::Scalar;
         debug!(
             "default visit_constant(ty: {:?}, user_ty: {:?}, literal: {:?})",
             ty, user_ty, literal
@@ -2371,8 +2371,8 @@ impl<'a, 'b: 'a, 'tcx: 'b, E> MirVisitor<'a, 'b, 'tcx, E> {
                 match ty.sty {
                     TyKind::Bool => {
                         result = match literal {
-                            mir::interpret::ConstValue::Scalar(Scalar::Bits { bits, .. }) => {
-                                if *bits == 0 {
+                            mir::interpret::ConstValue::Scalar(Scalar::Raw { data, .. }) => {
+                                if *data == 0 {
                                     &ConstantDomain::False
                                 } else {
                                     &ConstantDomain::True
@@ -2382,24 +2382,24 @@ impl<'a, 'b: 'a, 'tcx: 'b, E> MirVisitor<'a, 'b, 'tcx, E> {
                         };
                     }
                     TyKind::Char => {
-                        result = if let mir::interpret::ConstValue::Scalar(Scalar::Bits {
-                            bits,
+                        result = if let mir::interpret::ConstValue::Scalar(Scalar::Raw {
+                            data,
                             ..
                         }) = literal
                         {
                             &mut self
                                 .constant_value_cache
-                                .get_char_for(char::try_from(*bits as u32).unwrap())
+                                .get_char_for(char::try_from(*data as u32).unwrap())
                         } else {
                             unreachable!()
                         };
                     }
                     TyKind::Float(..) => {
                         result = match literal {
-                            mir::interpret::ConstValue::Scalar(Scalar::Bits { bits, size }) => {
+                            mir::interpret::ConstValue::Scalar(Scalar::Raw { data, size }) => {
                                 match *size {
-                                    4 => &mut self.constant_value_cache.get_f32_for(*bits as u32),
-                                    _ => &mut self.constant_value_cache.get_f64_for(*bits as u64),
+                                    4 => &mut self.constant_value_cache.get_f32_for(*data as u32),
+                                    _ => &mut self.constant_value_cache.get_f64_for(*data as u64),
                                 }
                             }
                             _ => unreachable!(),
@@ -2410,13 +2410,13 @@ impl<'a, 'b: 'a, 'tcx: 'b, E> MirVisitor<'a, 'b, 'tcx, E> {
                     }
                     TyKind::Int(..) => {
                         result = match literal {
-                            mir::interpret::ConstValue::Scalar(Scalar::Bits { bits, size }) => {
+                            mir::interpret::ConstValue::Scalar(Scalar::Raw { data, size }) => {
                                 let value: i128 = match *size {
-                                    1 => i128::from(*bits as i8),
-                                    2 => i128::from(*bits as i16),
-                                    4 => i128::from(*bits as i32),
-                                    8 => i128::from(*bits as i64),
-                                    _ => *bits as i128,
+                                    1 => i128::from(*data as i8),
+                                    2 => i128::from(*data as i16),
+                                    4 => i128::from(*data as i32),
+                                    8 => i128::from(*data as i64),
+                                    _ => *data as i128,
                                 };
                                 &mut self.constant_value_cache.get_i128_for(value)
                             }
@@ -2430,23 +2430,12 @@ impl<'a, 'b: 'a, 'tcx: 'b, E> MirVisitor<'a, 'b, 'tcx, E> {
                         },
                         _,
                     ) => {
-                        result = if let mir::interpret::ConstValue::Slice(ptr, len) = literal {
-                            if let Scalar::Ptr(ptr) = ptr {
-                                let alloc = self.tcx.alloc_map.lock().get(ptr.alloc_id);
-                                if let Some(AllocKind::Memory(alloc)) = alloc {
-                                    let slice = &alloc.bytes[(ptr.offset.bytes() as usize)..]
-                                        [..(*len as usize)];
-                                    let s = std::str::from_utf8(slice).expect("non utf8 str");
-                                    &mut self.constant_value_cache.get_string_for(s)
-                                } else {
-                                    panic!("pointer to erroneous constant {:?}, {:?}", ptr, len);
-                                }
-                            } else {
-                                unimplemented!(
-                                    "unsupported mir::interpret::ConstValue::Slice(ptr, ..): {:?}",
-                                    ptr
-                                );
-                            }
+                        result = if let mir::interpret::ConstValue::Slice { data, start, end } =
+                            literal
+                        {
+                            let slice = &data.bytes[*start..*end];
+                            let s = std::str::from_utf8(slice).expect("non utf8 str");
+                            &mut self.constant_value_cache.get_string_for(s)
                         } else {
                             unimplemented!("unsupported val of type Ref: {:?}", literal);
                         };
@@ -2459,38 +2448,47 @@ impl<'a, 'b: 'a, 'tcx: 'b, E> MirVisitor<'a, 'b, 'tcx, E> {
                         },
                         _,
                     ) => {
-                        if let mir::interpret::ConstValue::Scalar(Scalar::Bits { bits, .. }, ..) =
+                        if let mir::interpret::ConstValue::Scalar(Scalar::Raw { data, .. }, ..) =
                             &length.val
                         {
-                            let len = *bits;
-                            if let mir::interpret::ConstValue::Scalar(sc) = literal {
-                                if let Scalar::Ptr(ptr) = sc {
-                                    let alloc = self.tcx.alloc_map.lock().get(ptr.alloc_id);
-                                    if let Some(AllocKind::Memory(alloc)) = alloc {
-                                        let e_type = ExpressionType::from(&elem_type.sty);
-                                        if e_type != ExpressionType::U8 {
-                                            info!(
-                                                "Untested case of mir::interpret::ConstValue::Scalar found at {:?}",
-                                                self.current_span
-                                            );
-                                        }
-                                        return self.deconstruct_constant_array(
-                                            &alloc.bytes,
-                                            e_type,
-                                            Some(len),
-                                        );
-                                    } else {
-                                        unimplemented!(
-                                            "unsupported alloc_id {:?} returned: {:?}",
-                                            ptr.alloc_id,
-                                            alloc
-                                        );
-                                    }
-                                } else {
-                                    unimplemented!("unsupported Scalar: {:?}", sc);
+                            let len = *data;
+                            let e_type = ExpressionType::from(&elem_type.sty);
+                            if e_type != ExpressionType::U8 {
+                                info!(
+                                    "Untested case of mir::interpret::ConstValue::Scalar found at {:?}",
+                                    self.current_span
+                                );
+                            }
+                            match literal {
+                                mir::interpret::ConstValue::Slice { data, start, end } => {
+                                    let slice = &data.bytes[*start..*end];
+                                    return self.deconstruct_constant_array(
+                                        slice,
+                                        e_type,
+                                        Some(len),
+                                    );
                                 }
-                            } else {
-                                unimplemented!("unsupported constant value: {:?}", literal);
+                                mir::interpret::ConstValue::ByRef(_, alloc) => {
+                                    return self.deconstruct_constant_array(
+                                        &alloc.bytes,
+                                        e_type,
+                                        Some(len),
+                                    );
+                                }
+                                mir::interpret::ConstValue::Scalar(
+                                    mir::interpret::Scalar::Ptr(ptr),
+                                ) => {
+                                    let alloc =
+                                        self.tcx.alloc_map.lock().unwrap_memory(ptr.alloc_id);
+                                    return self.deconstruct_constant_array(
+                                        &alloc.bytes,
+                                        e_type,
+                                        Some(len),
+                                    );
+                                }
+                                _ => {
+                                    unimplemented!("unsupported val of type Ref: {:?}", literal);
+                                }
                             }
                         } else {
                             unimplemented!("unsupported array length: {:?}", length);
@@ -2503,40 +2501,31 @@ impl<'a, 'b: 'a, 'tcx: 'b, E> MirVisitor<'a, 'b, 'tcx, E> {
                             ..
                         },
                         _,
-                    ) => {
-                        if let mir::interpret::ConstValue::Slice(ptr, len) = literal {
-                            if let Scalar::Ptr(ptr) = ptr {
-                                let alloc = self.tcx.alloc_map.lock().get(ptr.alloc_id);
-                                if let Some(AllocKind::Memory(alloc)) = alloc {
-                                    let e_type = ExpressionType::from(&elem_type.sty);
-                                    return self.deconstruct_constant_array(
-                                        &alloc.bytes,
-                                        e_type,
-                                        None,
-                                    );
-                                } else {
-                                    panic!("pointer to erroneous constant {:?}, {:?}", ptr, len);
-                                }
-                            } else {
-                                unimplemented!(
-                                    "unsupported mir::interpret::ConstValue::Slice(ptr, ..): {:?}",
-                                    ptr
-                                );
-                            }
-                        } else {
+                    ) => match literal {
+                        mir::interpret::ConstValue::Slice { data, start, end } => {
+                            let slice = &data.bytes[*start..*end];
+                            let e_type = ExpressionType::from(&elem_type.sty);
+                            return self.deconstruct_constant_array(slice, e_type, None);
+                        }
+                        mir::interpret::ConstValue::ByRef(_, alloc) => {
+                            let e_type = ExpressionType::from(&elem_type.sty);
+                            return self.deconstruct_constant_array(&alloc.bytes, e_type, None);
+                        }
+                        _ => {
                             unimplemented!("unsupported val of type Ref: {:?}", literal);
-                        };
-                    }
+                        }
+                    },
                     TyKind::Uint(..) => {
                         result = match literal {
-                            mir::interpret::ConstValue::Scalar(Scalar::Bits { bits, .. }) => {
-                                &mut self.constant_value_cache.get_u128_for(*bits)
+                            mir::interpret::ConstValue::Scalar(Scalar::Raw { data, .. }) => {
+                                &mut self.constant_value_cache.get_u128_for(*data)
                             }
                             _ => unreachable!(),
                         };
                     }
                     _ => {
                         println!("span: {:?}", self.current_span);
+                        println!("type kind {:?}", ty.sty);
                         println!("unimplemented constant {:?}", literal);
                         result = &ConstantDomain::Unimplemented;
                     }
