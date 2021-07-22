@@ -98,6 +98,7 @@ impl<'analysis, 'compilation, 'tcx> BodyVisitor<'analysis, 'compilation, 'tcx> {
         let def = rustc_middle::ty::InstanceDef::Item(id);
         let mir = crate_visitor.tcx.instance_mir(def);
         let tcx = crate_visitor.tcx;
+        info!("<callgraph> root::{:?}", def_id);
         BodyVisitor {
             cv: crate_visitor,
             tcx,

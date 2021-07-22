@@ -535,6 +535,7 @@ impl<'block, 'analysis, 'compilation, 'tcx> BlockVisitor<'block, 'analysis, 'com
         from_hir_call: bool,
         fn_span: &rustc_span::Span,
     ) {
+        let caller_def_id = self.bv.def_id;
         // This offset is used to distinguish any local variables that leak out from the called function
         // from local variables of the callee function.
         // This situation arises when a structured value stored in a local variable is assigned to
@@ -671,6 +672,9 @@ impl<'block, 'analysis, 'compilation, 'tcx> BlockVisitor<'block, 'analysis, 'com
         call_visitor.function_constant_args = func_const_args;
         call_visitor.initial_type_cache = adt_map;
         trace!("calling func {:?}", call_visitor.callee_func_ref);
+        info!("<callgraph> cedge::{:?}-{:?}", caller_def_id, callee_def_id);
+        info!("<callgraph> args::{:?}", call_visitor.actual_argument_types);
+        info!("<callgraph> redge::{:?}-{:?}", callee_def_id, caller_def_id);
         if call_visitor.handled_as_special_function_call() {
             return;
         }

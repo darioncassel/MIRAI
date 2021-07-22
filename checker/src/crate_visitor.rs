@@ -105,6 +105,7 @@ impl<'compilation, 'tcx> CrateVisitor<'compilation, 'tcx> {
             } else {
                 info!("analyzing function {}", name);
             }
+            info!("<callgraph> croot::{:?}", def_id);
             self.analyze_body(def_id);
         }
         self.emit_or_check_diagnostics();

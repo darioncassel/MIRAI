@@ -1,0 +1,95 @@
+// Demonstration of checking a property on all
+// paths with DataLog relations.
+//
+// Entry is 1, Checker is 2, Exit is 5
+//               (1)
+//             /    \
+//           1        4
+//         /            \
+//       (2)            (5)
+//      /  \
+//     2    3
+//   /        \
+// (3)        (4)
+// Expected: 
+//   Checked{.node = 3}
+//   Checked{.node = 4}
+// ================================================
+
+
+// An edge connects two nodes, has a sequence number
+// and is either a call edge (0) or a return edge (1)
+input relation Edge(node1: u32, node2: u32, seqnum: u32, etype: u8)
+
+
+// A valid node is connected to the graph
+output relation ValidNode(node: u32)
+ValidNode(node) :- Edge(_, node, _, _), Edge(node, _, _, _).
+
+
+// A valid sequence number is associated with an edge in the graph
+output relation ValidSeqNum(i: u32)
+ValidSeqNum(i) :- Edge(_, _, i, t).
+
+
+// Is there a path from from the node1 to node2?
+output relation PathFrom(node1: u32, node2: u32, seqnum: u32)
+PathFrom(node1, node2, i) :- Edge(node1, node2, i, _), NotEqual(node1, node2).
+PathFrom(node1, node3, i) :- Edge(node1, node2, i, _), PathFrom(node2, node3, j), j > i.
+
+
+// Not the same node
+output relation NotEqual(i: u32, j: u32)
+NotEqual(i, j) :- ValidNode(i), ValidNode(j), (i != j).
+
+
+// Is there a path to node2 that does not pass through node1?
+// (Requires at least three nodes to exist)
+output relation NotAllPaths(node1: u32, node2: u32)
+NotAllPaths(node1, node2) :- ValidNode(node1), 
+                            PathFrom(parent1, parent2, _), 
+                            PathFrom(parent2, node2, _), 
+                            NotEqual(node1, parent2), 
+                            not PathFrom(parent2, node1, _), 
+                            not PathFrom(node1, parent2, _).
+
+
+
+// Does every path to node2 pass through node1?
+output relation OnAllPaths(node1: u32, node2: u32)
+OnAllPaths(node1, node2) :- PathFrom(node1, node2, _), 
+                            NotEqual(node1, node2),
+                            not NotAllPaths(node1, node2).
+
+
+// Does node1 call node2?
+output relation Caller(node1: u32, node2: u32, i: u32)
+Caller(node1, node2, i) :- Edge(node1, node2, i, 0).
+Caller(node1, node3, i) :- Edge(node1, node2, i, 0), Caller(node2, node3, j), j > i.
+
+
+// Is node1 called by node2?
+output relation Callee(node1: u32, node2: u32, i: u32)
+Callee(node1, node2, i) :- Edge(node1, node2, i, 1).
+Callee(node1, node3, i) :- Edge(node1, node2, i, 1), Callee(node2, node3, j), j > i.
+
+
+// A node is checked if every path to the node passes 
+// through the checking node (2)
+output relation Checked(node: u32)
+Checked(node) :- OnAllPaths(5, node), Callee(5, node, _).
+
+
+// An exit node has no children
+output relation ExitNode(node: u32)
+ExitNode(node) :- Edge(parent, node, _, 0), not PathFrom(node, _, _).
+
+
+// Checked exit.
+output relation CheckedExit(node: u32)
+CheckedExit(node) :- Checked(node), ExitNode(node).
+
+
+// Not always checked
+output relation NotChecked(node: u32)
+NotChecked(node) :- ValidNode(node), not Checked(node).
