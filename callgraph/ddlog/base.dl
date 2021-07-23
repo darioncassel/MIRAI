@@ -17,25 +17,31 @@
 // ================================================
 
 
-// An edge connects two nodes, has a sequence number
-// and is either a call edge (0) or a return edge (1)
-input relation Edge(node1: u32, node2: u32, seqnum: u32, etype: u8)
+// An edge connects two nodes, has a sequence number,
+// is either a call edge (0) or a return edge (1),
+// and has a type
+input relation Edge(node1: u32, node2: u32, seqnum: u32, etype: u8, ntype: u32)
+
+
+// Encodes that ntype2 is a subtype of type1
+input relation SubType(ntype1: u32, ntype2: u32)
 
 
 // A valid node is connected to the graph
 output relation ValidNode(node: u32)
-ValidNode(node) :- Edge(_, node, _, _), Edge(node, _, _, _).
+ValidNode(node) :- Edge(_, node, _, _, _).
+ValidNode(node) :- Edge(node, _, _, _, _).
 
 
 // A valid sequence number is associated with an edge in the graph
 output relation ValidSeqNum(i: u32)
-ValidSeqNum(i) :- Edge(_, _, i, t).
+ValidSeqNum(i) :- Edge(_, _, i, _, _).
 
 
 // Is there a path from from the node1 to node2?
 output relation PathFrom(node1: u32, node2: u32, seqnum: u32)
-PathFrom(node1, node2, i) :- Edge(node1, node2, i, _), NotEqual(node1, node2).
-PathFrom(node1, node3, i) :- Edge(node1, node2, i, _), PathFrom(node2, node3, j), j > i.
+PathFrom(node1, node2, i) :- Edge(node1, node2, i, _, _), NotEqual(node1, node2).
+PathFrom(node1, node3, i) :- Edge(node1, node2, i, _, _), PathFrom(node2, node3, j), j > i.
 
 
 // Not the same node
@@ -64,25 +70,52 @@ OnAllPaths(node1, node2) :- PathFrom(node1, node2, _),
 
 // Does node1 call node2?
 output relation Caller(node1: u32, node2: u32, i: u32)
-Caller(node1, node2, i) :- Edge(node1, node2, i, 0).
-Caller(node1, node3, i) :- Edge(node1, node2, i, 0), Caller(node2, node3, j), j > i.
+Caller(node1, node2, i) :- Edge(node1, node2, i, 0, _).
+Caller(node1, node3, i) :- Edge(node1, node2, i, 0, _), Caller(node2, node3, j), j > i.
 
 
 // Is node1 called by node2?
 output relation Callee(node1: u32, node2: u32, i: u32)
-Callee(node1, node2, i) :- Edge(node1, node2, i, 1).
-Callee(node1, node3, i) :- Edge(node1, node2, i, 1), Callee(node2, node3, j), j > i.
+Callee(node1, node2, i) :- Edge(node1, node2, i, 1, _).
+Callee(node1, node3, i) :- Edge(node1, node2, i, 1, _), Callee(node2, node3, j), j > i.
+
+
+// Valid type
+output relation ValidType(ntype: u32)
+ValidType(ntype) :- SubType(_, ntype).
+ValidType(ntype) :- SubType(ntype, _).
+
+
+// Transitive subtype (includes nominal type equality)
+output relation SubTypeTrans(ntype1: u32, ntype2: u32)
+SubTypeTrans(ntype1, ntype2) :- ValidType(ntype1), ValidType(ntype2), ntype1 == ntype2.
+SubTypeTrans(ntype1, ntype2) :- SubType(ntype1, ntype2).
+SubTypeTrans(ntype1, ntype3) :- SubType(ntype1, ntype2), SubTypeTrans(ntype2, ntype3).
+
+
+// The call path from node1 to node2 has type ntype
+// if we can construct a typed path to the node (including transitive subtyping)
+// of type ntype
+output relation CallPathType(node1: u32, node2: u32, ntype: u32)
+CallPathType(node1, node2, ntype) :- Edge(node1, node2, _, 0, ntype).
+CallPathType(node1, node3, ntype1) :- Edge(node2, node3, _, 0, ntype1), CallPathType(node1, node2, ntype2), SubTypeTrans(ntype2, ntype1).
 
 
 // A node is checked if every path to the node passes 
-// through the checking node (2)
+// through the checking node
 output relation Checked(node: u32)
-Checked(node) :- OnAllPaths(5, node), Callee(5, node, _).
+Checked(node) :- OnAllPaths(4, node), Callee(4, node, _).
+
+
+// A node is checked with regards to type ntype if every path to the node passes 
+// through the checking node and the path to the checking node can be typed as ntype
+output relation CheckedT(node: u32, ntype: u32)
+CheckedT(node, ntype) :- OnAllPaths(4, node), Callee(4, node, _), CallPathType(node, 4, ntype).
 
 
 // An exit node has no children
 output relation ExitNode(node: u32)
-ExitNode(node) :- Edge(parent, node, _, 0), not PathFrom(node, _, _).
+ExitNode(node) :- Edge(parent, node, _, 0, _), not PathFrom(node, _, _).
 
 
 // Checked exit.
@@ -93,3 +126,8 @@ CheckedExit(node) :- Checked(node), ExitNode(node).
 // Not always checked
 output relation NotChecked(node: u32)
 NotChecked(node) :- ValidNode(node), not Checked(node).
+
+
+// Not always checked with respect to type ntype
+output relation NotCheckedT(node: u32, ntype: u32)
+NotCheckedT(node, ntype) :- ValidNode(node), ValidType(ntype), not CheckedT(node, ntype).
