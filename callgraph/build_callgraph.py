@@ -14,7 +14,7 @@ def collect_edges(lines):
         'edges': set(),
         'node_info': {},
     }
-    excluded_crates = ['core', 'alloc', 'mirai_annotations']
+    excluded_crates = ['core', 'std', 'alloc', 'mirai_annotations']
     ctr = 0
     for line in lines:
         if '<callgraph>' in line:
@@ -292,9 +292,10 @@ def shorten_names(graph):
     for idx, name in graph['nodes'].items():
         parts = name.split('::')
         if 'closure' in name:
-            new_names[idx] = f'{parts[0]}-{parts[-2]}.{parts[-1]}'
+            shortened_name = f'{idx}.{parts[0]}-{parts[-2]}.{parts[-1]}'
         else:
-            new_names[idx] = f'{parts[0]}-{parts[-1]}'
+            shortened_name = f'{idx}.{parts[0]}-{parts[-1]}'
+        new_names[idx] = shortened_name
     return {
         'nodes': new_names,
         'node_info': graph['node_info'],
