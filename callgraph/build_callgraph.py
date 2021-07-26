@@ -1,364 +1,441 @@
 import json
 from sys import argv
+from enum import Enum
 
 
-def parse_defid(defid):
-    parts = defid.split('DefId(')[1].split(' ~ ')
-    parts = [x.strip() for x in parts]
-    return (parts[0], parts[1].strip(')'))
+class NodeType(Enum):
+    # Regular root
+    ROOT = 1
+    # Crate root: Starting point for analysis (pub fn)
+    CROOT = 2
+    # Closure
+    CLOSURE = 3
 
 
-def collect_edges(lines):
-    graph = {
-        'nodes': {},
-        'edges': set(),
-        'node_info': {},
-    }
-    excluded_crates = ['core', 'std', 'alloc', 'mirai_annotations']
-    ctr = 0
+class Node(object):
+
+    def __init__(self, defid: str, name: str, ntype: NodeType):
+        """
+        A Node has a DefId, name, and type.
+
+        ntype ::= Root | Croot
+        
+        Nodes are uniquely identified by DefId.
+        """
+        self.defid = defid
+        self.name = name
+        self.ntype = ntype
+    
+    def __repr__(self):
+        return f'Node({self.defid}, {self.name}, {self.ntype})'
+
+
+class EdgeDir(Enum):
+    # Caller
+    CALL = 1
+    # Return
+    RET = 2
+
+
+class Edge(object):
+
+    def __init__(self, caller_id: str, callee_id: str, direction: EdgeDir, rtype: str, id=None):
+        """
+        An Edge connects two nodes.
+
+        Edges are uniquely identified by their endpoints, direction, and Rust type.
+        """
+        self.caller_id = caller_id
+        self.callee_id = callee_id
+        self.direction = direction
+        self.rtype = rtype
+        self.id = id
+
+    def hash(self):
+        """
+        Return the edge's info in a way that can be hashed, e.g., for a set.
+        """
+        return (self.caller_id, self.callee_id, self.direction, self.rtype, self.id)
+
+    def min_hash(self):
+        """
+        Return the edge's minimal info in a way that can be hashed, e.g., for a set.
+        """
+        return (self.caller_id, self.callee_id, self.direction)
+
+    def __repr__(self):
+        return f'Edge({self.id}, {self.caller_id}, {self.callee_id}, {self.direction}, {self.rtype})'
+
+
+class CallGraph(object):
+
+    def __init__(self, nodes={}, edges={}):
+        # A map from defid to Node
+        self.nodes = nodes
+        # A map of Edge hashes to Edges
+        self.edges = edges
+        # Crates to exclude from call graph
+        self.excluded_crates = ['core', 'std', 'alloc', 'mirai_annotations']
+
+    def maybe_add_node(self, node):
+        """
+        Add a node to the graph if conditions are satisifed
+        """
+        cont = True
+        for crate in self.excluded_crates:
+            if crate in node.name:
+                cont = False
+        already_croot = (node.defid in self.nodes and self.nodes[node.defid] == NodeType.CROOT)
+        if cont and not already_croot:
+            self.nodes[node.defid] = node
+    
+    def get_node(self, defid):
+        """
+        Get a node by defid
+        """
+        if defid in self.nodes:
+            return self.nodes[defid]
+        else:
+            raise Exception(f'No node found for DefId: {defid}')
+
+    def get_node_by_name(self, name):
+        """
+        Get the first node associated (substring) with
+        the given name.
+        """
+        for node in self.nodes.values():
+            if name in node.name:
+                return node
+        raise Exception(f'No node found with name: {name}')
+
+    def _get_closure_parent_defid(self, closure_node):
+        """
+        Heuristic for finding the parent of a closure based
+        on node names.
+        """
+        parent_name = '::'.join(closure_node.name.split('::')[:-1])
+        parent_defid = None
+        for defid, node in self.nodes.items():
+            if parent_name == node.name:
+                parent_defid = defid
+                break
+        return parent_defid
+
+    def _resolve_closures(self, edge):
+        """
+        Heuristic for resolving closure edges to their parent nodes.
+        """
+        caller_node = self.get_node(edge.caller_id)
+        callee_node = self.get_node(edge.callee_id)
+        if caller_node.ntype == NodeType.CLOSURE:
+            closure_parent_defid = self._get_closure_parent_defid(caller_node)
+            if closure_parent_defid:
+                edge.caller_id = closure_parent_defid
+        if callee_node.ntype == NodeType.CLOSURE:
+            closure_parent_defid = self._get_closure_parent_defid(callee_node)
+            if closure_parent_defid:
+                edge.callee_id = closure_parent_defid
+        return edge
+
+    def maybe_add_edge(self, edge):
+        """
+        Add an edge to the graph if its endpoints both exist.
+        """
+        if edge.caller_id in self.nodes and edge.callee_id in self.nodes:
+            edge = self._resolve_closures(edge)
+            edge.id = len(self.edges)
+            self.edges[edge.hash()] = edge
+
+
+def parse_defid(line):
+    """
+    Parse a DefId from a line.
+    """
+    try:
+        parts = line.split('DefId(')[1].split(' ~ ')
+        parts = [x.strip() for x in parts]
+        return (parts[0], parts[1].strip(')'))
+    except Exception as exn:
+        print(line)
+        raise exn
+
+
+def parse_node(line, from_edge=False):
+    """
+    Parse a node from a line.
+    """
+    try:
+        node_type = NodeType.ROOT
+        if not from_edge:
+            if 'croot::' in line:
+                node_type = NodeType.CROOT
+            elif '{closure#' in line:
+                node_type = NodeType.CLOSURE
+        defid, node_name = parse_defid(line)
+        return Node(defid, node_name, node_type)
+    except Exception as exn:
+        print(line)
+        raise exn
+
+
+def parse_edges(line):
+    """
+    Parse edge(s) from a raw line
+    """
+    edge_type = None
+    edge_args = []
+    # Currently, only caller's args are recorded
+    if 'cedge::' in line:
+        edge_type = EdgeDir.CALL
+        arg_part = line.split('|=')[1].strip()
+        edge_args = [x.strip() for x in arg_part[1:-1].split(',')]
+    elif 'redge::' in line:
+        edge_type = EdgeDir.RET
+    else:
+        raise Exception('Unreachable')
+    parts = line.split('edge::')[1].strip().split('-')
+    caller_id = parse_defid(parts[0])[0]
+    callee_id = parse_defid(parts[1])[0]
+    edges = []
+    if len(edge_args) == 0:
+        edge = Edge(caller_id, callee_id, edge_type, '')
+        edges.append(edge)
+    else:
+        for arg in edge_args:
+            edge = Edge(caller_id, callee_id, edge_type, arg)
+            edges.append(edge)
+    return edges
+
+
+def parse_graph(lines):
+    """
+    Parse the call graph from MIRAI's debug output.
+    """
+    graph = CallGraph()
     for line in lines:
+        # print('glen: ', len(graph.nodes))
         if '<callgraph>' in line:
+            line = line.split('<callgraph> ')[1]
             if 'root::' in line:
-                node_type = 'root'
-                if 'croot::' in line:
-                    node_type = 'croot'
-                elif '{closure#' in line:
-                    node_type = 'closure'
-                defid = parse_defid(line.split('root::')[1].strip())
-                cont = True
-                for crate in excluded_crates:
-                    if crate in defid[1]:
-                        cont = False
-                already_croot = defid[0] in graph['node_info'] and graph['node_info'][defid[0]] == 'croot'
-                if cont and not already_croot:
-                    graph['nodes'][defid[0]] = defid[1]
-                    graph['node_info'][defid[0]] = node_type
-                    ctr += 1
+                node = parse_node(line)
+                graph.maybe_add_node(node)
             if 'edge::' in line:
-                edge_type = None
-                if 'cedge::' in line:
-                    edge_type = 'black'
-                elif 'redge::' in line:
-                    edge_type = 'red'
-                else:
-                    raise Exception('Unreachable')
-                parts = line.split('edge::')[1].strip().split('-')
-                caller_defid = parse_defid(parts[0])
-                callee_defid = parse_defid(parts[1])
-                cont = True
-                for crate in excluded_crates:
-                    if crate in caller_defid[1] or crate in callee_defid[1]:
-                        cont = False
-                if cont:
-                    if caller_defid[0] not in graph['nodes']:
-                        graph['nodes'][caller_defid[0]] = caller_defid[1]
-                        graph['node_info'][caller_defid[0]] = 'child'
-                        ctr += 1
-                    if callee_defid[0] not in graph['nodes']:
-                        graph['nodes'][callee_defid[0]] = callee_defid[1]
-                        graph['node_info'][callee_defid[0]] = 'child'
-                        ctr += 1
-                    if graph['node_info'][caller_defid[0]] == 'closure':
-                        closure_parent_defid = get_closure_parent_defid(graph, caller_defid)
-                        if closure_parent_defid:
-                            caller_defid = closure_parent_defid
-                    if graph['node_info'][callee_defid[0]] == 'closure':
-                        closure_parent_defid = get_closure_parent_defid(graph, callee_defid)
-                        if closure_parent_defid:
-                            callee_defid = closure_parent_defid
-                    graph['edges'].add((caller_defid[0], callee_defid[0], edge_type, ctr))
-                    ctr += 1
-    return {
-        'nodes': graph['nodes'],
-        'node_info': graph['node_info'],
-        'edges': graph['edges'],
-    }
+                edges = parse_edges(line)
+                for edge in edges:
+                    # Add endpoint nodes if they don't already exist
+                    graph.maybe_add_node(parse_node(line.split('-')[0]))
+                    graph.maybe_add_node(parse_node(line.split('-')[1]))
+                    graph.maybe_add_edge(edge)
+    return graph
 
 
-def get_closure_parent_defid(graph, closure_defid):
-    idx, name = closure_defid[0], closure_defid[1]
-    parent_name = '::'.join(name.split('::')[:-1])
-    parent_defid = None
-    for idx2, name2 in graph['nodes'].items():
-        if parent_name == name2:
-            parent_defid = (idx2, name2)
-            break
-    return parent_defid
-
-
-def add_closure_edges_inner(graph, closure_defid, ctr):
-    closure_edges = []
-    caller_idx = get_closure_parent_defid(graph, closure_defid)
-    if caller_idx:
-        closure_edges.append((caller_idx, idx, 'black', ctr))
-        ctr += 1
-        closure_edges.append((idx, caller_idx, 'red', ctr))
-        ctr += 1
-    return closure_edges, ctr
-
-
-def add_closure_edges(graph):
-    closure_edges = set()
-    for idx, name in graph['nodes'].items():
-        if '{closure' in name:
-            caller_name = '::'.join(name.split('::')[:-1])
-            caller_idx = None
-            for idx2, name2 in graph['nodes'].items():
-                if caller_name == name2:
-                    caller_idx = idx2
-                    break
-            if caller_idx:
-                closure_edges.add((caller_idx, idx, 'black', 0))
-                closure_edges.add((idx, caller_idx, 'red', 0))
-    return {
-        'nodes': graph['nodes'],
-        'node_info': graph['node_info'],
-        'edges': graph['edges'].union(closure_edges),
-    }
-
-
-def is_parent(graph, idx1, idx2):
+def slice_graph(graph, name):
     """
-    There is a backwards path from idx1 to idx2
+    Slice the graph to only include nodes that reachable
+    from the node corresponding to the given name.
     """
-    reachable = set(idx1)
-    while len(reachable) > 0:
-        curr = list(reachable)[0]
-        reachable -= set(curr)
-        for edge in graph['edges']:
-            if edge[0] == idx1:
-                if edge[1] == idx2:
-                    return True
-                else:
-                    reachable.add(edge[1])
-    return False
-
-
-def callers(graph):
-    return set([x[0] for x in graph['edges']])
-
-
-def get_parents(graph, idx):
-    parents = set()
-    for edge in graph['edges']:
-        if edge[1] == idx:
-            parents.add(edge[0])
-    return parents
-
-
-def get_all_parents(graph, idxs):
-    parents = set()
-    for idx in idxs:
-        parents = parents.union(get_parents(graph, idx))
-    return parents
-
-
-def lca(graph, idx1, idx2):
-    """
-    Find the least common ancestor of idx1 and node idx2
-    """
-    parents1 = get_parents(graph, idx1)
-    parents2 = get_parents(graph, idx2)
-    ctr = 0
-    while len(parents1.intersection(parents2)) < 1 and ctr < 100:
-        parents1 = get_all_parents(graph, parents1)
-        parents2 = get_all_parents(graph, parents2)
-        ctr += 1
-    common = parents1.intersection(parents2)
-    if len(common) == 1:
-        return list(common)[0]
-    elif len(common) > 1:
-        raise Exception('TODO')
-    elif len(common) < 1:
-        # raise Exception(f'No LCA found: {idx1}, {idx2}')
-        return None
-
-
-def add_sequence_edges(graph):
-    """
-    If node n1 has sequence number s1 and n1 has number s2
-    where n2 is not a parent of n1 and s1 < s2, add an edge
-    """
-    new_edges = set()
-    for idx1, n1 in graph['nodes'].items():
-        s1 = int(n1.split('::')[0])
-        if idx1 not in callers(graph):
-            min_2 = None
-            for idx2, n2 in graph['nodes'].items():
-                s2 = int(n2.split('::')[0])
-                if s1 < s2 and not is_parent(graph, n2, n1):
-                    if min_2 is None or s2 < min_2[1]:
-                        min_2 = (idx2, s2)
-            if min_2 is not None:
-                idx_n = lca(graph, idx1, min_2[0])
-                if idx_n:
-                    new_edges.add((idx1, idx_n, 'blue'))
-    return {
-        'nodes': graph['nodes'],
-        'edges': graph['edges'].union(new_edges),
-    }
-
-
-def add_return_edges(graph):
-    return_edges = set()
-    for edge in graph['edges']:
-        return_edges.add((edge[1], edge[0], 'red'))
-    return {
-        'nodes': graph['nodes'],
-        'node_info': graph['node_info'],
-        'edges': graph['edges'].union(return_edges),
-    }
-
-
-def slice_graph(graph, endpoint_name):
-    culled_edges = set()
-    reachable_node_names = set()
-    reachable_node_names.add(endpoint_name)
-    changes = True
-    while changes:
-        changes = False
-        for edge in graph['edges']:
-            new_reachable_node_names = set()
-            for node_name in reachable_node_names:
-                if node_name in graph['nodes'][edge[0]]:
-                    is_croot = edge[1] in graph['node_info'] and graph['node_info'][edge[1]] == 'croot'
-                    if not is_croot or edge[2] == 'black':
-                        culled_edges.add(edge)
-                        new_reachable_node_names.add(graph['nodes'][edge[1]])
-            old_len = len(reachable_node_names)
-            reachable_node_names = reachable_node_names.union(new_reachable_node_names)
-            if len(reachable_node_names) > old_len:
-                changes = True
-    reachable_nodes = {}
-    reachable_info = {}
-    for idx, name in graph['nodes'].items():
-        if name in reachable_node_names or endpoint_name in name:
-            reachable_nodes[idx] = name
-            if idx in graph['node_info']:
-                reachable_info[idx] = graph['node_info'][idx]
-    return {
-        'nodes': reachable_nodes,
-        'node_info': reachable_info,
-        'edges': culled_edges,
-    }
+    node = graph.get_node_by_name(name)
+    reachable_nodes = {node.defid: node}
+    reachable_edges = {}
+    node_queue = [node]
+    while len(node_queue) != 0:
+        caller_node = node_queue.pop(0)
+        for edge in graph.edges.values():
+            if caller_node.defid == edge.caller_id:
+                callee_node = graph.get_node(edge.callee_id)
+                # Stop at the CROOT boundary unless the CROOT is directly called
+                if edge.direction == EdgeDir.CALL or callee_node.ntype != NodeType.CROOT:
+                    reachable_edges[edge.hash()] = edge
+                    # Only add this endpoint if we haven't already seen it
+                    if callee_node.defid not in reachable_nodes:
+                        reachable_nodes[callee_node.defid] = callee_node
+                        node_queue.append(callee_node)
+    return CallGraph(reachable_nodes, reachable_edges)
 
 
 def filter_graph(graph, string):
+    """
+    Filter graph to only include nodes with certain substrings.
+    """
     reduced_nodes = {}
-    reduced_info = {}
-    reduced_idxs = set()
-    for idx, name in graph['nodes'].items():
-        if string in name:
-            reduced_nodes[idx] = name
-            if idx in graph['node_info']:
-                reduced_info[idx] = graph['node_info'][idx]
-            reduced_idxs.add(idx)
-    reduced_edges = set()
-    for edge in graph['edges']:
-        if edge[0] in reduced_idxs and edge[1] in reduced_idxs:
-            reduced_edges.add(edge)
-    return {
-        'nodes': reduced_nodes,
-        'node_info': reduced_info,
-        'edges': reduced_edges,
-    }
+    reduced_edges = {}
+    for defid, node in graph.nodes.items():
+        if string in node.name:
+            reduced_nodes[defid] = node
+    for edge_hash, edge in graph.edges.items():
+        if edge.caller_id in reduced_nodes and edge.callee_id in reduced_nodes:
+            reduced_edges[edge_hash] = edge
+    return CallGraph(reduced_nodes, reduced_edges)
 
 
 def reindex(graph):
+    """
+    Map DefIds to integers.
+    """
     translation = {}
-    ctr = 0
     new_nodes = {}
-    new_info = {}
-    for defid, name in graph['nodes'].items():
+    new_edges = {}
+    for defid, node in graph.nodes.items():
+        ctr = len(translation)
         translation[defid] = ctr
-        new_nodes[ctr] = name
-        if defid in graph['node_info']:
-            new_info[ctr] = graph['node_info'][defid]
-        ctr += 1
-    new_edges = set()
-    edge_idx = sorted([edge[3] for edge in graph['edges']])
-    for edge in graph['edges']:
-        new_edge = (translation[edge[0]], translation[edge[1]], edge[2], edge_idx.index(edge[3]) + 1)
-        new_edges.add(new_edge)
+        new_nodes[ctr] = node
+    edge_ids = sorted([edge.id for edge in graph.edges.values()])
+    for edge in graph.edges.values():
+        new_edge = Edge(
+            translation[edge.caller_id], 
+            translation[edge.callee_id], 
+            edge.direction,
+            edge.rtype,
+            edge_ids.index(edge.id) + 1
+        )
+        new_edges[new_edge.hash()] = new_edge
+    return CallGraph(new_nodes, new_edges)
+
+
+def to_json(graph):
+    """
+    Change graph representation for JSON serialization.
+    """
+    nodes = {}
+    for idx, node in graph.nodes.items():
+        nodes[idx] = {
+            'defid': node.defid,
+            'name': node.name,
+            'ntype': str(node.ntype),
+        }
+    edges = []
+    for edge in graph.edges.values():
+        edges.append({
+            'id': edge.id,
+            'caller_id': edge.caller_id,
+            'callee_id': edge.callee_id,
+            'direction': str(edge.direction),
+            'rtype': edge.rtype,
+        })
     return {
-        'nodes': new_nodes,
-        'node_info': new_info,
-        'edges': new_edges,
+        'nodes': nodes,
+        'edges': edges,
     }
 
 
-def shorten_names(graph):
-    new_names = {}
-    for idx, name in graph['nodes'].items():
-        parts = name.split('::')
-        if 'closure' in name:
-            shortened_name = f'{idx}.{parts[0]}-{parts[-2]}.{parts[-1]}'
+def from_json(graph_json):
+    """
+    Deserialize graph from JSON.
+    """
+    nodes = {}
+    for idx, node in graph_json['nodes'].items():
+        ntype_str = node['ntype']
+        ntype = None
+        if ntype_str == 'NodeType.ROOT':
+            ntype = NodeType.ROOT
+        elif ntype_str == 'NodeType.CROOT':
+            ntype = NodeType.CROOT
+        elif ntype_str == 'NodeType.CLOSURE':
+            ntype = NodeType.CLOSURE
         else:
-            shortened_name = f'{idx}.{parts[0]}-{parts[-1]}'
-        new_names[idx] = shortened_name
-    return {
-        'nodes': new_names,
-        'node_info': graph['node_info'],
-        'edges': graph['edges'],
-    }
+            raise Exception(f'Unexpected NodeType: {ntype_str}')
+        nodes[idx] = Node(node['defid'], node['name'], ntype)
+    edges = {}
+    for edge in graph_json['edges']:
+        dir_str = edge['direction']
+        edge_dir = None
+        if dir_str == 'EdgeDir.CALL':
+            edge_dir = EdgeDir.CALL
+        elif dir_str == 'EdgeDir.RET':
+            edge_dir = EdgeDir.RET
+        else:
+            raise Exception(f'Unexpected EdgeDir: {dir_str}')
+        edge = Edge(edge['caller_id'], edge['callee_id'], edge_dir, edge['rtype'], edge['id'])
+        edges[edge.hash()] = edge
+    return CallGraph(nodes, edges)
 
 
 def dedup_edges(graph):
-    # Deduplicate to the minimum edge sequence number
+    """
+    Deduplicate edges to the minimum edge sequence number.
+    """
+    new_edges_id = {}
     new_edges = {}
-    for edge in graph['edges']:
-        if (edge[0], edge[1], edge[2]) in new_edges:
-            entry = new_edges[(edge[0], edge[1], edge[2])]
-            new_edges[(edge[0], edge[1], edge[2])] = (edge[0], edge[1], edge[2], min(entry[3], edge[3]))
+    for edge in graph.edges.values():
+        if edge.min_hash() in new_edges_id:
+            curr_min_id = new_edges_id[edge.min_hash()]
+            if edge.id < curr_min_id:
+                new_edges_id[edge.min_hash()] = edge.id
+                new_edges[edge.hash()] = edge
         else:
-            new_edges[(edge[0], edge[1], edge[2])] = edge
-    return {
-        'nodes': graph['nodes'],
-        'node_info': graph['node_info'],
-        'edges': new_edges.values(),
-    }
+            new_edges_id[edge.min_hash()] = edge.id
+            new_edges[edge.hash()] = edge
+    return CallGraph(graph.nodes, new_edges)
+
+
+def shorten_name(node):
+    """
+    Shorten a node's name for cleaner presentation.
+    """
+    parts = node.name.split('::')
+    if 'closure' in node.name:
+        shortened_name = f'{node.defid}.{parts[0]}-{parts[-2]}.{parts[-1]}'
+    else:
+        shortened_name = f'{node.defid}.{parts[0]}-{parts[-1]}'
+    return shortened_name
 
 
 def to_graphviz(graph):
+    """
+    Convert the graph to dot representation for viewing.
+    """
     graph = dedup_edges(graph)
+    graph = reindex(graph)
     out_str = 'digraph callgraph {\n\tnode [shape=box];\n'
     effective_nodes = set()
-    for edge in graph['edges']:
-        n1 = graph['nodes'][edge[0]]
-        effective_nodes.add(n1)
-    for node in list(effective_nodes):
-        out_str += f'\t"{node}"\n'
-    for edge in graph['edges']:
-        n1 = graph['nodes'][edge[0]]
-        n2 = graph['nodes'][edge[1]]
-        out_str += f'\t"{n1}" -> "{n2}"\n [label="{edge[3]}" color="{edge[2]}"]\n'
+    for edge in graph.edges.values():
+        effective_nodes.add(edge.caller_id)
+        effective_nodes.add(edge.callee_id)
+    for node in graph.nodes.values():
+        if node.defid in effective_nodes:
+            out_str += f'\t"{shorten_name(node)}"\n'
+    for edge in graph.edges.values():
+        n1 = shorten_name(graph.nodes[edge.caller_id])
+        n2 = shorten_name(graph.nodes[edge.callee_id])
+        color = 'black' if edge.direction == EdgeDir.CALL else 'red'
+        out_str += f'\t"{n1}" -> "{n2}"\n [label="{edge.id}" color="{color}"]\n'
     return out_str + '}'
 
 
 def to_ddlog(graph):
+    """
+    Convert the graph to datalog representation for analysis.
+    """
+    arg_nums = {}
     dat_out_str = 'start;\n'
-    for i, edge in enumerate(graph['edges']):
-        etype = 0 if edge[2] == 'black' else 1
-        dat_out_str += f'insert Edge({edge[0]},{edge[1]},{edge[3]},{etype})'
-        if i == len(graph['edges']) - 1:
-            dat_out_str += ';\n'
-        else:
-            dat_out_str += ',\n'
+    for edge in graph.edges.values():
+        edge_dir = 0 if edge.direction == EdgeDir.CALL else 1
+        dat_out_str += f'insert Edge({edge.id},{edge.caller_id},{edge.callee_id});\n'
+        dat_out_str += f'insert EdgeSeq({edge.id},{edge.id});\n'
+        dat_out_str += f'insert EdgeDir({edge.id},{edge_dir});\n'
+        if edge.rtype not in arg_nums:
+            arg_nums[edge.rtype] = len(arg_nums)
+        arg_num = arg_nums[edge.rtype]
+        dat_out_str += f'insert EdgeType({edge.id},{arg_num});\n'
     dat_out_str += 'commit;\ndump Checked;\ndump NotChecked;\n'
+    print(arg_nums)
     return dat_out_str
 
 
 def main(log_path):
+    # Parse the graph from MIRAI debug output
     with open(log_path, 'r') as log_f:
         lines = log_f.readlines()
-    graph = collect_edges(lines)
+    graph = parse_graph(lines)
+    # Ensure that the JSON representation is sufficient
+    graph_json = to_json(graph)
+    graph = from_json(graph_json)
+    # Reduce the graph to nodes relevant for this analysis
     graph = slice_graph(graph, 'verify_script')
-    graph = filter_graph(graph, 'check_bounds')
+    graph = filter_graph(graph, '::check_bounds::')
     graph = reindex(graph)
-    graph = shorten_names(graph)
     with open('./graph.json', 'w+') as graph_f:
-        graph = {'nodes': graph['nodes'], 'node_info': graph['node_info'], 'edges': list(graph['edges'])}
-        json.dump(graph, graph_f)
+        json.dump(to_json(graph), graph_f)
     with open('./graph.dot', 'w+') as dotgraph_f:
         dotgraph = to_graphviz(graph)
         dotgraph_f.write(dotgraph)
