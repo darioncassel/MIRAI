@@ -17,10 +17,8 @@ class Node(object):
     def __init__(self, defid: str, name: str, ntype: NodeType):
         """
         A Node has a DefId, name, and type.
-
-        ntype ::= Root | Croot
         
-        Nodes are uniquely identified by DefId.
+        Nodes are uniquely identified by their DefId.
         """
         self.defid = defid
         self.name = name
@@ -69,11 +67,13 @@ class Edge(object):
 
 class CallGraph(object):
 
-    def __init__(self, nodes={}, edges={}):
+    def __init__(self, nodes={}, edges={}, rtypes={}):
         # A map from defid to Node
         self.nodes = nodes
         # A map of Edge hashes to Edges
         self.edges = edges
+        # An index of types
+        self.rtypes = rtypes
         # Crates to exclude from call graph
         self.excluded_crates = ['core', 'std', 'alloc', 'mirai_annotations']
 
@@ -82,11 +82,16 @@ class CallGraph(object):
         Add a node to the graph if conditions are satisifed
         """
         cont = True
+        # Node should not belong to an excluded crate
         for crate in self.excluded_crates:
             if crate in node.name:
                 cont = False
-        already_croot = (node.defid in self.nodes and self.nodes[node.defid] == NodeType.CROOT)
-        if cont and not already_croot:
+        # If the node is already present in the graph
+        # as a CROOT, don't overwrite it
+        if node.defid in self.nodes \
+            and self.nodes[node.defid].ntype == NodeType.CROOT:
+                cont = False
+        if cont:
             self.nodes[node.defid] = node
     
     def get_node(self, defid):
@@ -142,8 +147,22 @@ class CallGraph(object):
         Add an edge to the graph if its endpoints both exist.
         """
         if edge.caller_id in self.nodes and edge.callee_id in self.nodes:
+            # Resolve edge closures
             edge = self._resolve_closures(edge)
+            # Assign an ID to the edge
             edge.id = len(self.edges)
+            # Add the Rust type associated with the edge
+            rtype_id = None
+            if edge.rtype in self.rtypes.values():
+                for k, v in self.rtypes.items():
+                    if edge.rtype == v:
+                        rtype_id = k
+                        break
+            else:
+                rtype_id = len(self.rtypes)
+                self.rtypes[rtype_id] = edge.rtype
+            # Set the Rust type to its index
+            edge.rtype = rtype_id
             self.edges[edge.hash()] = edge
 
 
@@ -160,17 +179,16 @@ def parse_defid(line):
         raise exn
 
 
-def parse_node(line, from_edge=False):
+def parse_node(line):
     """
     Parse a node from a line.
     """
     try:
         node_type = NodeType.ROOT
-        if not from_edge:
-            if 'croot::' in line:
-                node_type = NodeType.CROOT
-            elif '{closure#' in line:
-                node_type = NodeType.CLOSURE
+        if 'croot::' in line:
+            node_type = NodeType.CROOT
+        elif '{closure#' in line:
+            node_type = NodeType.CLOSURE
         defid, node_name = parse_defid(line)
         return Node(defid, node_name, node_type)
     except Exception as exn:
@@ -223,7 +241,7 @@ def parse_graph(lines):
                 edges = parse_edges(line)
                 for edge in edges:
                     # Add endpoint nodes if they don't already exist
-                    graph.maybe_add_node(parse_node(line.split('-')[0]))
+                    graph.maybe_add_node(parse_node(line.split('-')[0], ))
                     graph.maybe_add_node(parse_node(line.split('-')[1]))
                     graph.maybe_add_edge(edge)
     return graph
@@ -237,6 +255,7 @@ def slice_graph(graph, name):
     node = graph.get_node_by_name(name)
     reachable_nodes = {node.defid: node}
     reachable_edges = {}
+    reachable_rtypes = {}
     node_queue = [node]
     while len(node_queue) != 0:
         caller_node = node_queue.pop(0)
@@ -246,11 +265,12 @@ def slice_graph(graph, name):
                 # Stop at the CROOT boundary unless the CROOT is directly called
                 if edge.direction == EdgeDir.CALL or callee_node.ntype != NodeType.CROOT:
                     reachable_edges[edge.hash()] = edge
+                    reachable_rtypes[edge.rtype] = graph.rtypes[edge.rtype]
                     # Only add this endpoint if we haven't already seen it
                     if callee_node.defid not in reachable_nodes:
                         reachable_nodes[callee_node.defid] = callee_node
                         node_queue.append(callee_node)
-    return CallGraph(reachable_nodes, reachable_edges)
+    return CallGraph(reachable_nodes, reachable_edges, reachable_rtypes)
 
 
 def filter_graph(graph, string):
@@ -259,13 +279,15 @@ def filter_graph(graph, string):
     """
     reduced_nodes = {}
     reduced_edges = {}
+    reduced_rtypes = {}
     for defid, node in graph.nodes.items():
         if string in node.name:
             reduced_nodes[defid] = node
     for edge_hash, edge in graph.edges.items():
         if edge.caller_id in reduced_nodes and edge.callee_id in reduced_nodes:
             reduced_edges[edge_hash] = edge
-    return CallGraph(reduced_nodes, reduced_edges)
+            reduced_rtypes[edge.rtype] = graph.rtypes[edge.rtype]
+    return CallGraph(reduced_nodes, reduced_edges, reduced_rtypes)
 
 
 def reindex(graph):
@@ -289,7 +311,7 @@ def reindex(graph):
             edge_ids.index(edge.id) + 1
         )
         new_edges[new_edge.hash()] = new_edge
-    return CallGraph(new_nodes, new_edges)
+    return CallGraph(new_nodes, new_edges, graph.rtypes)
 
 
 def to_json(graph):
@@ -315,6 +337,7 @@ def to_json(graph):
     return {
         'nodes': nodes,
         'edges': edges,
+        'rtypes': graph.rtypes,
     }
 
 
@@ -347,7 +370,7 @@ def from_json(graph_json):
             raise Exception(f'Unexpected EdgeDir: {dir_str}')
         edge = Edge(edge['caller_id'], edge['callee_id'], edge_dir, edge['rtype'], edge['id'])
         edges[edge.hash()] = edge
-    return CallGraph(nodes, edges)
+    return CallGraph(nodes, edges, graph_json['rtypes'])
 
 
 def dedup_edges(graph):
@@ -365,7 +388,7 @@ def dedup_edges(graph):
         else:
             new_edges_id[edge.min_hash()] = edge.id
             new_edges[edge.hash()] = edge
-    return CallGraph(graph.nodes, new_edges)
+    return CallGraph(graph.nodes, new_edges, graph.rtypes)
 
 
 def shorten_name(node):
@@ -413,12 +436,8 @@ def to_ddlog(graph):
         dat_out_str += f'insert Edge({edge.id},{edge.caller_id},{edge.callee_id});\n'
         dat_out_str += f'insert EdgeSeq({edge.id},{edge.id});\n'
         dat_out_str += f'insert EdgeDir({edge.id},{edge_dir});\n'
-        if edge.rtype not in arg_nums:
-            arg_nums[edge.rtype] = len(arg_nums)
-        arg_num = arg_nums[edge.rtype]
-        dat_out_str += f'insert EdgeType({edge.id},{arg_num});\n'
+        dat_out_str += f'insert EdgeType({edge.id},{edge.rtype});\n'
     dat_out_str += 'commit;\ndump Checked;\ndump NotChecked;\n'
-    print(arg_nums)
     return dat_out_str
 
 
