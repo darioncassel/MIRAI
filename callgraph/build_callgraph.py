@@ -165,6 +165,35 @@ class CallGraph(object):
             edge.rtype = rtype_id
             self.edges[edge.hash()] = edge
 
+    def derive_type_relations(self):
+        """
+        Derive equality and subtyping relationships from the following rules.
+
+        &t == t
+        mut t == t
+        [t] > t
+        """
+        type_to_id = {}
+        for rtype_id, rtype in self.rtypes.items():
+            type_to_id[rtype] = rtype_id
+        type_relations = set()
+        for rtype in self.rtypes.values():
+            relations = set()
+            base_type = rtype
+            if '[' in base_type and ']' in base_type:
+                base_type = base_type.replace('[', '').replace(']', '').strip()
+                relations.add(('sub', base_type))
+            if 'mut' in base_type:
+                base_type = base_type.replace('mut', '').strip()
+                relations.add(('eq', base_type))
+            if '&' in base_type:
+                base_type = base_type.replace('&', '').strip()
+                relations.add(('eq', base_type))
+            for relation, base_type in relations:
+                if base_type in type_to_id:
+                    type_relations.add((relation, type_to_id[rtype], type_to_id[base_type]))
+        return type_relations
+            
 
 def parse_defid(line):
     """
@@ -334,10 +363,13 @@ def to_json(graph):
             'direction': str(edge.direction),
             'rtype': edge.rtype,
         })
+    rtypes = {k: v for k, v in 
+                sorted([(int(k), v) for k, v in graph.rtypes.items()], 
+                        key=lambda x: x[0])}
     return {
         'nodes': nodes,
         'edges': edges,
-        'rtypes': graph.rtypes,
+        'rtypes': rtypes,
     }
 
 
@@ -437,6 +469,13 @@ def to_ddlog(graph):
         dat_out_str += f'insert EdgeSeq({edge.id},{edge.id});\n'
         dat_out_str += f'insert EdgeDir({edge.id},{edge_dir});\n'
         dat_out_str += f'insert EdgeType({edge.id},{edge.rtype});\n'
+    for type_relation in graph.derive_type_relations():
+        if type_relation[0] == 'eq':
+            dat_out_str += f'insert EqType({type_relation[1]},{type_relation[2]});\n'
+        elif type_relation[0] == 'sub':
+            dat_out_str += f'insert SubType({type_relation[1]},{type_relation[2]});\n'
+        else:
+            raise Exception(f'Unexpected type relation: {type_relation}')
     dat_out_str += 'commit;\ndump Checked;\ndump NotChecked;\n'
     return dat_out_str
 
