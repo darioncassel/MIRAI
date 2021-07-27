@@ -1,0 +1,47 @@
+[
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::StructHandle]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::ModuleHandle]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::Signature]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::StructDefinition]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::FunctionHandle]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::Constant]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::FieldInstantiation]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::FunctionInstantiation]"
+    },
+    {
+        "kind": "sub",
+        "t1": "&check_bounds::BoundsChecker",
+        "t2": "&[file_format::StructDefInstantiation]"
+    }
+]

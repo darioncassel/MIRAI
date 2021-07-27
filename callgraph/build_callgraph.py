@@ -169,29 +169,30 @@ class CallGraph(object):
         """
         Derive equality and subtyping relationships from the following rules.
 
+        Option<t> == t (Over-approximation)
         &t == t
         mut t == t
         [t] > t
         """
-        type_to_id = {}
-        for rtype_id, rtype in self.rtypes.items():
-            type_to_id[rtype] = rtype_id
         type_relations = set()
         for rtype in self.rtypes.values():
             relations = set()
             base_type = rtype
+            if '&std::option::Option<' in base_type:
+                base_type = base_type.replace('&std::option::Option<', '').replace('>', '').strip()
+                relations.add(('eq', base_type))
             if '[' in base_type and ']' in base_type:
                 base_type = base_type.replace('[', '').replace(']', '').strip()
                 relations.add(('sub', base_type))
             if 'mut' in base_type:
-                base_type = base_type.replace('mut', '').strip()
+                base_type = base_type.replace('mut ', '').strip()
                 relations.add(('eq', base_type))
             if '&' in base_type:
                 base_type = base_type.replace('&', '').strip()
                 relations.add(('eq', base_type))
             for relation, base_type in relations:
-                if base_type in type_to_id:
-                    type_relations.add((relation, type_to_id[rtype], type_to_id[base_type]))
+                if base_type in self.rtypes.values():
+                    type_relations.add((relation, rtype, base_type))
         return type_relations
             
 
@@ -457,7 +458,7 @@ def to_graphviz(graph):
     return out_str + '}'
 
 
-def to_ddlog(graph):
+def to_ddlog(graph, type_relations):
     """
     Convert the graph to datalog representation for analysis.
     """
@@ -469,18 +470,27 @@ def to_ddlog(graph):
         dat_out_str += f'insert EdgeSeq({edge.id},{edge.id});\n'
         dat_out_str += f'insert EdgeDir({edge.id},{edge_dir});\n'
         dat_out_str += f'insert EdgeType({edge.id},{edge.rtype});\n'
-    for type_relation in graph.derive_type_relations():
+    type_to_id = {v: k for k, v in graph.rtypes.items()}
+    type_relations = set([(t['kind'], t['t1'], t['t2']) for t in type_relations])
+    type_relations = type_relations.union(graph.derive_type_relations())
+    for type_relation in type_relations:
+        id1 = type_to_id[type_relation[1]]
+        id2 = type_to_id[type_relation[2]]
         if type_relation[0] == 'eq':
-            dat_out_str += f'insert EqType({type_relation[1]},{type_relation[2]});\n'
+            dat_out_str += f'insert EqType({id1},{id2});\n'
         elif type_relation[0] == 'sub':
-            dat_out_str += f'insert SubType({type_relation[1]},{type_relation[2]});\n'
+            dat_out_str += f'insert SubType({id1},{id2});\n'
         else:
             raise Exception(f'Unexpected type relation: {type_relation}')
     dat_out_str += 'commit;\ndump Checked;\ndump NotChecked;\n'
     return dat_out_str
 
 
-def main(log_path):
+def main(args):
+    log_path = args[0]
+    type_relations_path = None
+    if len(args) > 1:
+        type_relations_path = args[1]
     # Parse the graph from MIRAI debug output
     with open(log_path, 'r') as log_f:
         lines = log_f.readlines()
@@ -497,10 +507,14 @@ def main(log_path):
     with open('./graph.dot', 'w+') as dotgraph_f:
         dotgraph = to_graphviz(graph)
         dotgraph_f.write(dotgraph)
+    type_relations = {}
+    if type_relations_path:
+        with open(type_relations_path, 'r') as tr_f:
+            type_relations = json.load(tr_f)
     with open('./base.dat', 'w+') as base_dat_f:
-        dat_out = to_ddlog(graph)
+        dat_out = to_ddlog(graph, type_relations)
         base_dat_f.write(dat_out)
 
 
 if __name__ == '__main__':
-    main(argv[1])
+    main(argv[1:])
