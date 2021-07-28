@@ -26,8 +26,12 @@ input relation EdgeDir(id: u32, dir: u8)
 input relation EdgeType(id: u32, rtype: u32)
 
 
-// Encodes that ntype2 is a subtype of type1
+// Encodes that rtype2 is a subtype of rtype1
 input relation SubType(rtype1: u32, rtype2: u32)
+
+// Encodes that rtype1 is equivalent to rtype1
+// for the purpose of this analysis
+input relation EqType(rtype1: u32, rtype2: u32)
 
 
 // A valid node is connected to the graph
@@ -89,9 +93,16 @@ ValidType(rtype) :- SubType(_, rtype).
 ValidType(rtype) :- SubType(rtype, _).
 
 
+// Type equality
+output relation TypeEquality(rtype1: u32, rtype2: u32)
+TypeEquality(rtype1, rtype2) :- ValidType(rtype1), ValidType(rtype2), rtype1 == rtype2.
+TypeEquality(rtype1, rtype2) :- EqType(rtype1, rtype2).
+TypeEquality(rtype1, rtype2) :- EqType(rtype2, rtype1).
+
+
 // Transitive subtype (includes nominal type equality)
 output relation SubTypeTrans(rtype1: u32, rtype2: u32)
-SubTypeTrans(rtype1, rtype2) :- ValidType(rtype1), ValidType(rtype2), rtype1 == rtype2.
+SubTypeTrans(rtype1, rtype2) :- TypeEquality(rtype1, rtype2).
 SubTypeTrans(rtype1, rtype2) :- SubType(rtype1, rtype2).
 SubTypeTrans(rtype1, rtype3) :- SubType(rtype1, rtype2), SubTypeTrans(rtype2, rtype3).
 
@@ -111,13 +122,13 @@ CallPathType(node1, node3, rtype1) :- Edge(id, node2, node3),
 // A node is checked if every path to the node passes 
 // through the checking node
 output relation Checked(node: u32)
-Checked(node) :- OnAllPaths(4, node), Callee(4, node, _).
+Checked(node) :- OnAllPaths(17, node), Callee(17, node, _).
 
 
-// A node is checked with regards to type ntype if every path to the node passes 
-// through the checking node and the path to the checking node can be typed as ntype
-output relation CheckedT(node: u32, ntype: u32)
-CheckedT(node, ntype) :- OnAllPaths(4, node), Callee(4, node, _), CallPathType(node, 4, ntype).
+// A node is checked with regards to type rtype if every path to the node passes 
+// through the checking node and the path to the checking node can be typed as rtype
+output relation CheckedT(node: u32, rtype: u32)
+CheckedT(node, rtype) :- OnAllPaths(17, node), Callee(17, node, _), CallPathType(node, 17, rtype).
 
 
 // An exit node has no children
@@ -135,6 +146,6 @@ output relation NotChecked(node: u32)
 NotChecked(node) :- ValidNode(node), not Checked(node).
 
 
-// Not always checked with respect to type ntype
-output relation NotCheckedT(node: u32, ntype: u32)
-NotCheckedT(node, ntype) :- ValidNode(node), ValidType(ntype), not CheckedT(node, ntype).
+// Not always checked with respect to type rtype
+output relation NotCheckedT(node: u32, rtype: u32)
+NotCheckedT(node, rtype) :- ValidNode(node), ValidType(rtype), not CheckedT(node, rtype).

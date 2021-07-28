@@ -289,8 +289,7 @@ impl<'call, 'block, 'analysis, 'compilation, 'tcx>
     #[logfn_inputs(TRACE)]
     pub fn get_function_summary(&mut self) -> Option<Summary> {
         self.try_to_devirtualize();
-        info!("<callgraph> cedge::{:?}-{:?}", self.block_visitor.bv.def_id, self.callee_def_id);
-        info!("<callgraph> args::{:?}", self.actual_argument_types);
+        info!("<callgraph> cedge::{:?}-{:?}|={:?}", self.block_visitor.bv.def_id, self.callee_def_id, self.actual_argument_types);
         info!("<callgraph> redge::{:?}-{:?}", self.callee_def_id, self.block_visitor.bv.def_id);
         if let Some(func_ref) = &self.callee_func_ref.clone() {
             // If the actual arguments include any function constants, collect them together
