@@ -12,6 +12,7 @@ def parse_analysis_line(line):
     else:
         raise Exception(f'Failed to parse line: {line}')
 
+
 def decode_analysis_out(graph, ids):
     checked = {}
     for node_id, rtype_id in ids:

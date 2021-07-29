@@ -1,19 +1,4 @@
-// Demonstration of checking a property on all
-// paths with DataLog relations.
-//
-// Entry is 1, Checker is 2, Exit is 5
-//               (1)
-//             /    \
-//           1        4
-//         /            \
-//       (2)            (5)
-//      /  \
-//     2    3
-//   /        \
-// (3)        (4)
-// Expected: 
-//   Checked{.node = 3}
-//   Checked{.node = 4}
+// Checking a type-specific property on all paths.
 // ================================================
 
 
@@ -28,6 +13,7 @@ input relation EdgeType(id: u32, rtype: u32)
 
 // Encodes that rtype2 is a subtype of rtype1
 input relation SubType(rtype1: u32, rtype2: u32)
+
 
 // Encodes that rtype1 is equivalent to rtype1
 // for the purpose of this analysis
@@ -45,10 +31,10 @@ output relation ValidSeqNum(i: u32)
 ValidSeqNum(i) :- EdgeSeq(_, i).
 
 
-// Is there a path from from the node1 to node2?
+// Is there a path from from node1 to node2?
 output relation PathFrom(node1: u32, node2: u32, seqnum: u32)
 PathFrom(node1, node2, i) :- Edge(id, node1, node2), EdgeSeq(id, i), NotEqual(node1, node2).
-PathFrom(node1, node3, i) :- Edge(id, node1, node2), EdgeSeq(id, i), PathFrom(node2, node3, j), j > i.
+PathFrom(node1, node3, i) :- Edge(id, node1, node2), EdgeSeq(id, i), PathFrom(node2, node3, j), j >= i.
 
 
 // Not the same node
@@ -60,12 +46,10 @@ NotEqual(i, j) :- ValidNode(i), ValidNode(j), (i != j).
 // (Requires at least three nodes to exist)
 output relation NotAllPaths(node1: u32, node2: u32)
 NotAllPaths(node1, node2) :- ValidNode(node1), 
-                            PathFrom(parent1, parent2, _), 
-                            PathFrom(parent2, node2, _), 
-                            NotEqual(node1, parent2), 
-                            not PathFrom(parent2, node1, _), 
-                            not PathFrom(node1, parent2, _).
-
+                            PathFrom(parent, node2, _), 
+                            NotEqual(node1, parent), 
+                            not PathFrom(parent, node1, _), 
+                            not PathFrom(node1, parent, _).
 
 
 // Does every path to node2 pass through node1?
