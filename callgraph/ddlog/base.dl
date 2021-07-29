@@ -1,33 +1,19 @@
-// Demonstration of checking a property on all
-// paths with DataLog relations.
-//
-// Entry is 1, Checker is 2, Exit is 5
-//               (1)
-//             /    \
-//           1        4
-//         /            \
-//       (2)            (5)
-//      /  \
-//     2    3
-//   /        \
-// (3)        (4)
-// Expected: 
-//   Checked{.node = 3}
-//   Checked{.node = 4}
+// @Author Darion Cassel
 // ================================================
 
 
-// An edge connects two nodes, has a sequence number (seqnum)
-// is either a call edge (dir=0) or a return edge (dir=1),
-// and has a Rust type (rtype)
+// An edge connects two nodes and has a Rust type (rtype)
 input relation Edge(id: u32, node1: u32, node2: u32)
-input relation EdgeSeq(id: u32, seqnum: u32)
-input relation EdgeDir(id: u32, dir: u8)
 input relation EdgeType(id: u32, rtype: u32)
+
+
+// In the control flow graph, node1 dominates node2
+input relation Dom(node1: u32, node2: u32)
 
 
 // Encodes that rtype2 is a subtype of rtype1
 input relation SubType(rtype1: u32, rtype2: u32)
+
 
 // Encodes that rtype1 is equivalent to rtype1
 // for the purpose of this analysis
@@ -40,112 +26,180 @@ ValidNode(node) :- Edge(_, node, _).
 ValidNode(node) :- Edge(_, _, node).
 
 
-// A valid sequence number is associated with an edge in the graph
-output relation ValidSeqNum(i: u32)
-ValidSeqNum(i) :- EdgeSeq(_, i).
-
-
-// Is there a path from from the node1 to node2?
-output relation PathFrom(node1: u32, node2: u32, seqnum: u32)
-PathFrom(node1, node2, i) :- Edge(id, node1, node2), EdgeSeq(id, i), NotEqual(node1, node2).
-PathFrom(node1, node3, i) :- Edge(id, node1, node2), EdgeSeq(id, i), PathFrom(node2, node3, j), j > i.
-
-
 // Not the same node
 output relation NotEqual(i: u32, j: u32)
 NotEqual(i, j) :- ValidNode(i), ValidNode(j), (i != j).
 
 
-// Is there a path to node2 that does not pass through node1?
-// (Requires at least three nodes to exist)
-output relation NotAllPaths(node1: u32, node2: u32)
-NotAllPaths(node1, node2) :- ValidNode(node1), 
-                            PathFrom(parent1, parent2, _), 
-                            PathFrom(parent2, node2, _), 
-                            NotEqual(node1, parent2), 
-                            not PathFrom(parent2, node1, _), 
-                            not PathFrom(node1, parent2, _).
+// Caller edges: Does node1 call node2?
+output relation Caller(node1: u32, node2: u32)
+Caller(node1, node2) :- Edge(id, node1, node2).
+Caller(node1, node3) :- Edge(id, node1, node2), Caller(node2, node3).
 
 
-
-// Does every path to node2 pass through node1?
-output relation OnAllPaths(node1: u32, node2: u32)
-OnAllPaths(node1, node2) :- PathFrom(node1, node2, _), 
-                            NotEqual(node1, node2),
-                            not NotAllPaths(node1, node2).
-
-
-// Does node1 call node2?
-output relation Caller(node1: u32, node2: u32, i: u32)
-Caller(node1, node2, i) :- Edge(id, node1, node2), EdgeSeq(id, i), EdgeDir(id, 0).
-Caller(node1, node3, i) :- Edge(id, node1, node2), EdgeSeq(id, i), EdgeDir(id, 0), Caller(node2, node3, j), j > i.
+// Transitive dominance
+// Either there is an explicit dominance relationship
+// Or the node has a caller with an explicit dominance relationship.
+output relation Dominates(node1: u32, node2: u32)
+Dominates(node1, node2) :- Dom(node1, node2).
+Dominates(node1, node2) :- Caller(parent, node1), Dominates(parent, node2).
 
 
-// Is node1 called by node2?
-output relation Callee(node1: u32, node2: u32, i: u32)
-Callee(node1, node2, i) :- Edge(id, node1, node2), EdgeSeq(id, i), EdgeDir(id, 1).
-Callee(node1, node3, i) :- Edge(id, node1, node2), EdgeSeq(id, i), EdgeDir(id, 1), Callee(node2, node3, j), j > i.
+// Dataflow model
+// Data flows from node1 to node2:
+//      a. if node1 (transitively) calls node2
+//      b. if node1 (transitively) dominates node2
+output relation Dataflow(node1: u32, node2: u32)
+Dataflow(node1, node2) :- Caller(node1, node2).
+Dataflow(node1, node2) :- Dominates(node1, node2).
+
+
+// Dataflow via
+// There exists a dataflow from node1 to node3 that passes through node2.
+// This does not imply that every dataflow from node1 to node3 flows via node2.
+output relation DataflowVia(node1: u32, node2: u32, node3: u32)
+DataflowVia(node1, node2, node3) :- Dataflow(node1, node2), Dataflow(node2, node3).
+
+
+// No dataflow via
+// There is no dataflow path from node1 to node3 that passes through node2.
+// This is guaranteed to be true if an over-approximation of the call graph is used.
+output relation NoDataflowVia(node1: u32, node2: u32, node3: u32)
+NoDataflowVia(node1, node2, node3) :- NotEqual(node1, node2), NotEqual(node2, node3), NotEqual(node1, node3), 
+                                        not DataflowVia(node1, node2, node3).
+
+
+// At least two disinct dataflow paths from node1 to node2
+// If the call graph is an over-approximation, this is also an over-approximation.
+output relation AtLeastTwoFlows(node1: u32, node2: u32)
+AtLeastTwoFlows(node1, node2) :- DataflowVia(node1, nodeA, node2), DataflowVia(node1, nodeB, node2), NotEqual(nodeA, nodeB).
+
+
+// All dataflow via
+// Every path from node1 to node3 passes through node2
+// This is guaranteed to be true if an over-approximation of the call graph is used.
+output relation AllDataflowVia(node1: u32, node2: u32, node3: u32)
+AllDataflowVia(node1, node2, node3) :- DataflowVia(node1, node2, node3), not AtLeastTwoFlows(node1, node3).
+AllDataflowVia(node1, node2, node4) :- AllDataflowVia(node1, node2, node3), AllDataflowVia(node2, node3, node4).
+AllDataflowVia(node1, node3, node4) :- AllDataflowVia(node2, node3, node4), AllDataflowVia(node1, node2, node3).
+
+
+// Checked
+// A node is checked by a checker is every path from the node passes through the checker.
+// This checking is guaranteed if an over-approximation of the call graph is used.
+output relation CheckedBy(node: u32, checker: u32)
+CheckedBy(node, checker) :- AllDataflowVia(node, checker, _).
+
+
+// Exists unchecked flow
+// There exists a path from the node that does not pass through the checker.
+// This is not sound with an over-approximation of the call graph.
+output relation ExistsNotCheckedBy(node: u32, checker: u32)
+ExistsNotCheckedBy(node, checker) :- NotEqual(node, checker), not AllDataflowVia(node, checker, _).
+
+
+// Not checked by
+// No path from the node passes through the checker.
+output relation NotCheckedBy(node: u32, checker: u32)
+NotCheckedBy(node, checker) :- NotEqual(node, checker), not Dataflow(node, checker).
 
 
 // Valid type
+// A valid type is associated with some edge in the graph.
 output relation ValidType(rtype: u32)
-ValidType(rtype) :- SubType(_, rtype).
-ValidType(rtype) :- SubType(rtype, _).
+ValidType(rtype) :- EdgeType(_, rtype).
 
 
 // Type equality
+// Encodes that rtype1 and rtype2 either
+//   a. Known to be equal
+//   b. Nominally equal
 output relation TypeEquality(rtype1: u32, rtype2: u32)
 TypeEquality(rtype1, rtype2) :- ValidType(rtype1), ValidType(rtype2), rtype1 == rtype2.
 TypeEquality(rtype1, rtype2) :- EqType(rtype1, rtype2).
 TypeEquality(rtype1, rtype2) :- EqType(rtype2, rtype1).
 
 
-// Transitive subtype (includes nominal type equality)
+// Transitive subtype (includes type equality)
+// Encodes that rtype2 is a (transitive) subtype of rtype1
 output relation SubTypeTrans(rtype1: u32, rtype2: u32)
 SubTypeTrans(rtype1, rtype2) :- TypeEquality(rtype1, rtype2).
 SubTypeTrans(rtype1, rtype2) :- SubType(rtype1, rtype2).
 SubTypeTrans(rtype1, rtype3) :- SubType(rtype1, rtype2), SubTypeTrans(rtype2, rtype3).
 
 
-// The call path from node1 to node2 has type rtype
-// if we can construct a typed path to the node (including transitive subtyping)
-// of type rtype
-output relation CallPathType(node1: u32, node2: u32, rtype: u32)
-CallPathType(node1, node2, rtype) :- Edge(id, node1, node2), EdgeDir(id, 0), EdgeType(id, rtype).
-CallPathType(node1, node3, rtype1) :- Edge(id, node2, node3), 
-                                    EdgeDir(id, 0), 
-                                    EdgeType(id, rtype1), 
-                                    CallPathType(node1, node2, rtype2), 
-                                    SubTypeTrans(rtype2, rtype1).
+// Caller Type
+// A caller, node1, can be typed at rtype if
+//      a. node1 calls node2 with an argument of type rtype
+//      b. node1 calls a sequence of nodes with arguments that sequentially subtype to rtype at the call to node2
+output relation CallerType(node1: u32, node2: u32, rtype: u32)
+CallerType(node1, node2, rtype) :- Edge(id, node1, node2), EdgeType(id, rtype).
+CallerType(node1, node3, rtype) :- Edge(id, node1, node2), EdgeType(id, rtype2), SubTypeTrans(rtype2, rtype), CallerType(node2, node3, rtype).
 
 
-// A node is checked if every path to the node passes 
-// through the checking node
-output relation Checked(node: u32)
-Checked(node) :- OnAllPaths(17, node), Callee(17, node, _).
+// Transitive dominance with typing
+// Either there is an explicit dominance relationship and the nodes can be instantiated with or subtyped from t.
+// Or the node is a callee of a node with an explicit dominance relationship at type t.
+output relation TypedDominates(node1: u32, node2: u32, t: u32)
+TypedDominates(node1, node2, t) :- Dom(node1, node2), 
+                                    Edge(id1, _, node1), Edge(id2, _, node2), 
+                                    EdgeType(id1, t2), EdgeType(id2, t3), 
+                                    SubTypeTrans(t, t2), SubTypeTrans(t, t3).
+TypedDominates(node1, node3, t) :- CallerType(node2, node1, t2), SubTypeTrans(t, t2), TypedDominates(node2, node3, t).
 
 
-// A node is checked with regards to type rtype if every path to the node passes 
-// through the checking node and the path to the checking node can be typed as rtype
-output relation CheckedT(node: u32, rtype: u32)
-CheckedT(node, rtype) :- OnAllPaths(17, node), Callee(17, node, _), CallPathType(node, 17, rtype).
+// Typed Dataflow model
+// Data of type t flows from node1 to node2
+//      a. if node1 transitively calls node2 with type t
+//      b. if node1 transitively dominates node2 with type t
+//      c. if there is a dataflow of type t2 that is a supertype of t 
+//          (if t < t2 then passing t2 also passes t)
+output relation TypedDataflow(node1: u32, node2: u32, t: u32)
+TypedDataflow(node1, node2, t) :- CallerType(node1, node2, t).
+TypedDataflow(node1, node2, t) :- TypedDominates(node1, node2, t).
+TypedDataflow(node1, node2, t) :- TypedDataflow(node1, node2, t2), SubTypeTrans(t2, t).
 
 
-// An exit node has no children
-output relation ExitNode(node: u32)
-ExitNode(node) :- Edge(id, parent, node), EdgeDir(id, 0), not PathFrom(node, _, _).
+// Typed dataflow via
+// There exists a dataflow from node1 to node3 that passes through node2
+// that can be typed at t.
+output relation TypedDataflowVia(node1: u32, node2: u32, node3: u32, t: u32)
+TypedDataflowVia(node1, node2, node3, t) :- TypedDataflow(node1, node2, t), TypedDataflow(node2, node3, t).
 
 
-// Checked exit.
-output relation CheckedExit(node: u32)
-CheckedExit(node) :- Checked(node), ExitNode(node).
+// No typed dataflow via
+// There is no dataflow path of type t from node1 to node3 that passes through node2.
+output relation NoTypedDataflowVia(node1: u32, node2: u32, node3: u32, t: u32)
+NoTypedDataflowVia(node1, node2, node3, t) :- NotEqual(node1, node2), NotEqual(node2, node3), NotEqual(node1, node3), 
+                                            ValidType(t), not TypedDataflowVia(node1, node2, node3, t).
 
 
-// Not always checked
-output relation NotChecked(node: u32)
-NotChecked(node) :- ValidNode(node), not Checked(node).
+// At least two disinct dataflow paths from node1 to node2 that are both typed at t.
+output relation AtLeastTwoTypedFlows(node1: u32, node2: u32, t: u32)
+AtLeastTwoTypedFlows(node1, node2, t) :- TypedDataflowVia(node1, nodeA, node2, t), TypedDataflowVia(node1, nodeB, node2, t), NotEqual(nodeA, nodeB).
 
 
-// Not always checked with respect to type rtype
-output relation NotCheckedT(node: u32, rtype: u32)
-NotCheckedT(node, rtype) :- ValidNode(node), ValidType(rtype), not CheckedT(node, rtype).
+// All typed dataflow via
+// Every path from node1 to node3 of type t passes through node2
+output relation AllTypedDataflowVia(node1: u32, node2: u32, node3: u32, t: u32)
+AllTypedDataflowVia(node1, node2, node3, t) :- TypedDataflowVia(node1, node2, node3, t), not AtLeastTwoTypedFlows(node1, node3, t).
+AllTypedDataflowVia(node1, node2, node4, t) :- AllTypedDataflowVia(node1, node2, node3, t), AllTypedDataflowVia(node2, node3, node4, t).
+AllTypedDataflowVia(node1, node3, node4, t) :- AllTypedDataflowVia(node2, node3, node4, t), AllTypedDataflowVia(node1, node2, node3, t).
+
+
+// Checked at type
+// A node is checked by a checker is every path from the node passes through the checker.
+output relation CheckedAtTypeBy(node: u32, checker: u32, t: u32)
+CheckedAtTypeBy(node, checker, t) :- AllTypedDataflowVia(node, checker, _, t).
+
+
+// Exists unchecked flow at type
+// There exists a path from the node that does not pass through the checker.
+output relation ExistsNotCheckedAtTypeBy(node: u32, checker: u32, t: u32)
+ExistsNotCheckedAtTypeBy(node, checker, t) :- NotEqual(node, checker), ValidType(t), not AllTypedDataflowVia(node, checker, _, t).
+
+
+// Not checked at type by
+// No path from the node passes through the checker.
+output relation NotCheckedAtTypeBy(node: u32, checker: u32, t: u32)
+NotCheckedAtTypeBy(node, checker, t) :- NotEqual(node, checker), ValidType(t), not TypedDataflow(node, checker, t).
