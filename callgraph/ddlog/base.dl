@@ -41,22 +41,39 @@ NotEqual(node1, node2) :- ValidNode(node1), ValidNode(node2), (node1 != node2).
 NotEqual(node2, node1) :- NotEqual(node1, node2).
 
 
+// Caller (non-transitive)
+output relation CallerNT(node1: NodeID, node2: NodeID)
+CallerNT(node1, node2) :- Edge(_, node1, node2), NotEqual(node1, node2).
+
+
 // Caller 
 // node1 (transitively) calls node2
 output relation Caller(node1: NodeID, node2: NodeID)
-Caller(node1, node2) :- Edge(id, node1, node2), NotEqual(node1, node2).
-Caller(node1, node3) :- Edge(id, node1, node2), NotEqual(node1, node2), 
-                        Caller(node2, node3), NotEqual(node1, node3).
+Caller(node1, node2) :- CallerNT(node1, node2).
+Caller(node1, node3) :- CallerNT(node1, node2), Caller(node2, node3), NotEqual(node1, node3).
+
+
+// Dominates (non-transitive)
+output relation DominatesNT(node1: NodeID, node2: NodeID)
+DominatesNT(node1, node2) :- Dom(node1, node2), NotEqual(node1, node2).
 
 
 // Transitive dominance
-// Either there is an explicit dominance relationship
+// Either there is an explicit (possibly transitive) dominance relationship
 // Or the node has a caller with an explicit dominance relationship.
 output relation Dominates(node1: NodeID, node2: NodeID)
-Dominates(node1, node2) :- Dom(node1, node2), NotEqual(node1, node2).
-Dominates(node1, node3) :- Dom(node1, node2), NotEqual(node1, node2), 
-                            Dominates(node2, node3), NotEqual(node1, node3).
+Dominates(node1, node2) :- DominatesNT(node1, node2).
+Dominates(node1, node3) :- DominatesNT(node1, node2), Dominates(node2, node3), NotEqual(node1, node3).
 Dominates(node1, node2) :- Caller(parent, node1), NotEqual(node1, node2), Dominates(parent, node2).
+
+
+// Dataflow model (non-transitive)
+// Data flows from node1 to node2:
+//      a. if node1 directly calls node2
+//      b. if node1 directly dominates node2
+output relation DataflowNT(node1: NodeID, node2: NodeID)
+DataflowNT(node1, node2) :- CallerNT(node1, node2).
+DataflowNT(node1, node2) :- DominatesNT(node1, node2).
 
 
 // Dataflow model
@@ -81,11 +98,14 @@ DataflowVia(node1, node2, node3) :- Dataflow(node1, node2), NotEqual(node1, node
 // Dataflow not via
 // There exists a dataflow from node1 to node3 that does not pass through node2.
 //
-// There is a dataflow from node1 to node3 that passes through some node4 != node2.
-// Since there is no dataflow from node2 to node4, node2 cannot be in that same flow.
+// a. There is a dataflow from node1 to node3 that passes through some node4 != node2.
+//    Since there is no dataflow from node2 to node4, node2 cannot be in that same flow.
+// b. There is a non-transitive dataflow from node1 to node3 (no intermediate nodes).
 //
 // This is not guaranteed if an over-approximation of the call graph is used.
 output relation DataflowNotVia(node1: NodeID, node2: NodeID, node3: NodeID)
+DataflowNotVia(node1, node2, node3) :- NotEqual(node1, node2), NotEqual(node2, node3),
+                                        DataflowNT(node1, node3).
 DataflowNotVia(node1, node2, node3) :- NotEqual(node1, node2), NotEqual(node2, node3),
                                         DataflowVia(node1, node4, node3), NotEqual(node2, node4),
                                         not Dataflow(node2, node4).
@@ -95,14 +115,20 @@ DataflowNotVia(node1, node2, node3) :- NotEqual(node1, node2), NotEqual(node2, n
 // There is no dataflow path from node1 to node3 that passes through node2.
 // This is guaranteed to be true if an over-approximation of the call graph is used.
 output relation NoDataflowVia(node1: NodeID, node2: NodeID, node3: NodeID)
-NoDataflowVia(node1, node2, node3) :- ValidNode(node1), ValidNode(node2), ValidNode(node3),
+NoDataflowVia(node1, node2, node3) :- NotEqual(node1, node2), NotEqual(node2, node3),
                                         not DataflowVia(node1, node2, node3).
 
 
 // All dataflow via
-// Every path from node1 to node3 passes through node2
+// Every path from node1 to node3 passes through node2.
+//
+// This occurs in two cases:
+// a. If node2 dominates node3 then this holds for all dataflows from node1 to node2.
+// b. If there is no dataflow from node1 to node3 that does not pass through node2.
+//
 // This is guaranteed to be true if an over-approximation of the call graph is used.
 output relation AllDataflowVia(node1: NodeID, node2: NodeID, node3: NodeID)
+AllDataflowVia(node1, node2, node3) :- Dataflow(node1, node2), Dom(node2, node3).
 AllDataflowVia(node1, node2, node3) :- DataflowVia(node1, node2, node3), not DataflowNotVia(node1, node2, node3).
 AllDataflowVia(node1, node2, node4) :- AllDataflowVia(node1, node2, node3), AllDataflowVia(node2, node3, node4).
 AllDataflowVia(node1, node3, node4) :- AllDataflowVia(node2, node3, node4), AllDataflowVia(node1, node2, node3).
