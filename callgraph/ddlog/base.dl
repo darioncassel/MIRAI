@@ -1,13 +1,19 @@
 // @Author Darion Cassel
 // ================================================
 
-// Type aliases
+// Types
 // Unique edge identifier
 typedef EdgeID = u32
 // Unique node identifier
 typedef NodeID = u32
 // Unique Rust type identifier
 typedef TypeID = u32
+// The (annotated) kind of a node
+typedef Nkind = Entry | Exit | Checker
+
+
+// A node may be marked as an entry, an exit, or a checker
+input relation NodeType(id: NodeID, nkind: Nkind)
 
 
 // An edge connects two nodes and has a Rust type (rtype)
@@ -135,24 +141,36 @@ AllDataflowVia(node1, node3, node4) :- AllDataflowVia(node2, node3, node4), AllD
 
 
 // Not checked by
-// There exists some node2 such that the dataflow from node1 to node2 is not checked
+// A node is not checked by a checker
+// a. If the node has no outgoing dataflow
+// b. If the node only has dataflow to a single node that is not the checker.
+// c. If there exists some exit node2 such that the dataflow from node1 to node2 
+//    is does not pass through the checker.
 // This is not guaranteed if an over-approximation of the call graph is used.
-output relation NotCheckedDataflow(node: NodeID, checker: NodeID)
-NotCheckedDataflow(node1, checker) :- Dataflow(node1, node2), DataflowNotVia(node1, checker, node2).
+output relation NotCheckedBy(node: NodeID, checker: NodeID)
+NotCheckedBy(node1, checker) :- NodeType(checker, Checker), ValidNode(node1), not Dataflow(node1, _).
+NotCheckedBy(node1, checker) :- NodeType(checker, Checker), DataflowNT(node1, node2), NotEqual(node2, checker).
+NotCheckedBy(node1, checker) :- NodeType(checker, Checker), NodeType(node2, Exit), 
+                                Dataflow(node1, node2), DataflowNotVia(node1, checker, node2).
 
 
 // Checked by
-// A node is checked by a checker if every dataflow from the node passes through the checker.
+// A node is checked by a checker
+// a. If every dataflow from the node to an exit passes through the checker.
+// b. If every dataflow from the node terminates in the checker.
 // This checking is guaranteed if an over-approximation of the call graph is used.
 output relation CheckedBy(node: NodeID, checker: NodeID)
-CheckedBy(node, checker) :- NotEqual(node, checker), AllDataflowVia(node, checker, _), not NotCheckedDataflow(node, checker).
+CheckedBy(node, checker) :- NodeType(checker, Checker), NotEqual(node, checker), 
+                            DataflowNT(node, checker), not NotCheckedBy(node, checker).
+CheckedBy(node, checker) :- NodeType(checker, Checker), NotEqual(node, checker), NodeType(node2, Exit), 
+                            AllDataflowVia(node, checker, node2), not NotCheckedBy(node, checker).
 CheckedBy(node, checker2) :- CheckedBy(node, checker), CheckedBy(checker, checker2).
 
 
-// Not checked by
+// Never checked by
 // No path from the node passes through the checker.
-output relation NotCheckedBy(node: NodeID, checker: NodeID)
-NotCheckedBy(node, checker) :- NotEqual(node, checker), not Dataflow(node, checker).
+output relation NeverCheckedBy(node: NodeID, checker: NodeID)
+NeverCheckedBy(node, checker) :- ValidNode(node), NodeType(checker, Checker), not Dataflow(node, checker).
 
 
 // Valid type
