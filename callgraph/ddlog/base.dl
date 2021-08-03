@@ -136,8 +136,10 @@ NoDataflowVia(node1, node2, node3) :- NotEqual(node1, node2), NotEqual(node2, no
 output relation AllDataflowVia(node1: NodeID, node2: NodeID, node3: NodeID)
 AllDataflowVia(node1, node2, node3) :- Dataflow(node1, node2), Dom(node2, node3).
 AllDataflowVia(node1, node2, node3) :- DataflowVia(node1, node2, node3), not DataflowNotVia(node1, node2, node3).
-AllDataflowVia(node1, node2, node4) :- AllDataflowVia(node1, node2, node3), AllDataflowVia(node2, node3, node4).
-AllDataflowVia(node1, node3, node4) :- AllDataflowVia(node2, node3, node4), AllDataflowVia(node1, node2, node3).
+AllDataflowVia(node1, node2, node4) :- AllDataflowVia(node1, node2, node3), NotEqual(node1, node2),
+                                        AllDataflowVia(node2, node3, node4), NotEqual(node2, node4).
+AllDataflowVia(node1, node3, node4) :- AllDataflowVia(node1, node2, node3), NotEqual(node1, node3), 
+                                        AllDataflowVia(node2, node3, node4), NotEqual(node3, node4).
 
 
 // Not checked by
@@ -145,7 +147,7 @@ AllDataflowVia(node1, node3, node4) :- AllDataflowVia(node2, node3, node4), AllD
 // a. If the node has no outgoing dataflow
 // b. If the node only has dataflow to a single node that is not the checker.
 // c. If there exists some exit node2 such that the dataflow from node1 to node2 
-//    is does not pass through the checker.
+//    does not pass through the checker.
 // This is not guaranteed if an over-approximation of the call graph is used.
 output relation NotCheckedBy(node: NodeID, checker: NodeID)
 NotCheckedBy(node1, checker) :- NodeType(checker, Checker), ValidNode(node1), not Dataflow(node1, _).
@@ -168,7 +170,7 @@ CheckedBy(node, checker2) :- CheckedBy(node, checker), CheckedBy(checker, checke
 
 
 // Never checked by
-// No path from the node passes through the checker.
+// No dataflow from the node passes through the checker.
 output relation NeverCheckedBy(node: NodeID, checker: NodeID)
 NeverCheckedBy(node, checker) :- ValidNode(node), NodeType(checker, Checker), not Dataflow(node, checker).
 
@@ -284,37 +286,56 @@ TypedDataflowNotVia(node1, node2, node3, t) :- NotEqual(node1, node2), NotEqual(
 
 // No typed dataflow via
 // There is no dataflow path of type t from node1 to node3 that passes through node2.
+// This relation is expensive for bottom-up evaluation.
 output relation NoTypedDataflowVia(node1: NodeID, node2: NodeID, node3: NodeID, t: TypeID)
-NoTypedDataflowVia(node1, node2, node3, t) :- ValidNode(node1), ValidNode(node2), ValidNode(node3), 
-                                            ValidType(t), not TypedDataflowVia(node1, node2, node3, t).
+NoTypedDataflowVia(node1, node2, node3, t) :- NotEqual(node1, node2), NotEqual(node2, node3), ValidType(t),
+                                                not TypedDataflowVia(node1, node2, node3, t).
 
 
 // All typed dataflow via
 // Every path from node1 to node3 of type t passes through node2
+// This occurs in two cases:
+// a. If node2 dominates node3 at type t then this holds for all dataflows from node1 to node2.
+// b. If there is no dataflow from node1 to node3 of type t that does not pass through node2.
 output relation AllTypedDataflowVia(node1: NodeID, node2: NodeID, node3: NodeID, t: TypeID)
+AllTypedDataflowVia(node1, node2, node3, t) :- TypedDataflow(node1, node2, t), TypedDominates(node2, node3, t).
 AllTypedDataflowVia(node1, node2, node3, t) :- TypedDataflowVia(node1, node2, node3, t), not TypedDataflowNotVia(node1, node2, node3, t).
-AllTypedDataflowVia(node1, node2, node4, t) :- AllTypedDataflowVia(node1, node2, node3, t), AllTypedDataflowVia(node2, node3, node4, t).
-AllTypedDataflowVia(node1, node3, node4, t) :- AllTypedDataflowVia(node2, node3, node4, t), AllTypedDataflowVia(node1, node2, node3, t).
+AllTypedDataflowVia(node1, node2, node4, t) :- AllTypedDataflowVia(node1, node2, node3, t), NotEqual(node1, node2),
+                                                AllTypedDataflowVia(node2, node3, node4, t), NotEqual(node2, node4).
+AllTypedDataflowVia(node1, node3, node4, t) :- AllTypedDataflowVia(node1, node2, node3, t), NotEqual(node1, node3),
+                                                AllTypedDataflowVia(node2, node3, node4, t), NotEqual(node3, node4).
 
 
 // Not checked at type by
-// There exists some node2 such that the dataflow from node1 to node2 is not checked
-// This is not guaranteed if an over-approximation of the call graph is used.
-output relation NotCheckedTypedDataflow(node: NodeID, checker: NodeID, t: TypeID)
-NotCheckedTypedDataflow(node1, checker, t) :- TypedDataflow(node1, node2, t), TypedDataflowNotVia(node1, checker, node2, t).
+// A node is not checked by a checker at type t
+// a. If the node has no outgoing dataflow of type t
+// b. If the node only has dataflow of type t to a single node that is not the checker.
+// c. If there exists some exit node2 such that the dataflow from node1 to node2 of type t
+//    does not pass through the checker.
+output relation NotCheckedAtTypeBy(node: NodeID, checker: NodeID, t: TypeID)
+NotCheckedAtTypeBy(node1, checker, t) :- NodeType(checker, Checker), ValidNode(node1), ValidType(t), 
+                                            not TypedDataflow(node1, _, t).
+NotCheckedAtTypeBy(node1, checker, t) :- NodeType(checker, Checker), TypedDataflowNT(node1, node2, t), NotEqual(node2, checker).
+NotCheckedAtTypeBy(node1, checker, t) :- NodeType(checker, Checker), NodeType(node2, Exit), 
+                                            TypedDataflow(node1, node2, t), TypedDataflowNotVia(node1, checker, node2, t).
 
 
 // Checked by at type
 // A node is checked by a checker at type t 
-// if every dataflow of type t from the node passes through the checker.
+// a. If every dataflow of type t from the node to an exit passes through the checker.
+// b. If every dataflow of type t from the node terminates in the checker.
+// c. If the node is checked by the checker at type t2, which t is a member of.
 output relation CheckedAtTypeBy(node: NodeID, checker: NodeID, t: TypeID)
-CheckedAtTypeBy(node, checker, t) :- NotEqual(node, checker), AllTypedDataflowVia(node, checker, _, t), not NotCheckedTypedDataflow(node, checker, t).
+CheckedAtTypeBy(node, checker, t) :- NodeType(checker, Checker), NotEqual(node, checker),
+                                        TypedDataflowNT(node, checker, t), not NotCheckedAtTypeBy(node, checker, t).
+CheckedAtTypeBy(node, checker, t) :- NodeType(checker, Checker), NotEqual(node, checker), NodeType(exit, Exit),
+                                        AllTypedDataflowVia(node, checker, exit, t), not NotCheckedAtTypeBy(node, checker, t).
 CheckedAtTypeBy(node, checker2, t) :- CheckedAtTypeBy(node, checker, t), CheckedAtTypeBy(checker, checker2, t).
-CheckedAtTypeBy(node, checker, t2) :- CheckedAtTypeBy(node, checker, t), Member(t, t2).
+CheckedAtTypeBy(node, checker, t) :- CheckedAtTypeBy(node, checker, t2), Member(t2, t).
 
 
-// Not checked at type by
-// No path from the node passes through the checker.
-output relation NotCheckedAtTypeBy(node: NodeID, checker: NodeID, t: TypeID)
-NotCheckedAtTypeBy(node, checker, t) :- NotEqual(node, checker), ValidType(t), not TypedDataflow(node, checker, t).
-NotCheckedAtTypeBy(node, checker, t2) :- NotCheckedAtTypeBy(node, checker, t2), Member(t, t2).
+// Never checked at type by
+// No dataflow of type t from the node passes through the checker.
+output relation NeverCheckedAtTypeBy(node: NodeID, checker: NodeID, t: TypeID)
+NeverCheckedAtTypeBy(node, checker, t) :- ValidNode(node), NodeType(checker, Checker), ValidType(t),
+                                            not TypedDataflow(node, checker, t).
