@@ -47,7 +47,10 @@ def parse_analysis_line(line):
     """
     parts = line.split('{')
     relation_name = parts[0]
-    relation_operands_raw = parts[1].split(',')
+    if ',' in parts[1]:
+        relation_operands_raw = parts[1].split(',')
+    else:
+        relation_operands_raw = [parts[1]]
     operands = []
     for operand_raw in relation_operands_raw:
         match = re.search(r'\.(\w+) = (\d+)', operand_raw)
