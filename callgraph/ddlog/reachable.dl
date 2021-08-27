@@ -1,0 +1,6 @@
+input relation Edge(id: u32, node1: u32, node2: u32)
+input relation EdgeType(id: u32, rtype: u32)
+
+output relation Reachable(node1: u32, node2: u32)
+Reachable(node1, node2) :- Edge(_, node1, node2).
+Reachable(node1, node3) :- Edge(_, node1, node2), Reachable(node2, node3).
