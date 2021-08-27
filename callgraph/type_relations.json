@@ -1,47 +1,249 @@
-[
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::StructHandle]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::ModuleHandle]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::Signature]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::StructDefinition]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::FunctionHandle]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::Constant]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::FieldInstantiation]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::FunctionInstantiation]"
-    },
-    {
-        "kind": "sub",
-        "t1": "&check_bounds::BoundsChecker",
-        "t2": "&[file_format::StructDefInstantiation]"
-    }
-]
+{
+    "relations": [
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::Signature]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::Signature",
+            "type2": "&file_format::SignatureToken"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::SignatureToken",
+            "type2": "file_format::StructHandleIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::Constant]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::Constant",
+            "type2": "&file_format::SignatureToken"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "std::option::Option<&[file_format::ModuleHandle]>"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::ModuleHandle]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::ModuleHandle",
+            "type2": "file_format::AddressIdentifierIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::ModuleHandle",
+            "type2": "file_format::IdentifierIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "std::option::Option<&ModuleHandleIndex>"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::StructHandle]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructHandle",
+            "type2": "file_format::AddressIdentifierIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructHandle",
+            "type2": "file_format::IdentifierIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::FunctionHandle]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionHandle",
+            "type2": "file_format::ModuleHandleIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionHandle",
+            "type2": "file_format::IdentifierIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionHandle",
+            "type2": "file_format::SignatureIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionHandle",
+            "type2": "&[file_format::AbilitySet]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "std::option::Option<&[file_format::FieldHandle]>"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::FieldHandle]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FieldHandle",
+            "type2": "file_format::StructDefinitionIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructDefinition",
+            "type2": "file_format::StructFieldInformation"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::StructDefInstantiation]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructDefInstantiation",
+            "type2": "file_format::StructDefinitionIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructDefInstantiation",
+            "type2": "file_format::SignatureIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::FunctionInstantiation]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionInstantiation",
+            "type2": "file_format::FunctionHandleIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionInstantiation",
+            "type2": "file_format::SignatureIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "std::option::Option<&[file_format::FieldInstantiation]>"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::FieldInstantiation]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FieldInstantiation",
+            "type2": "file_format::FieldHandleIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FieldInstantiation",
+            "type2": "file_format::SignatureIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "std::option::Option<&[file_format::StructDefinition]>"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::StructDefinition]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructDefinition",
+            "type2": "file_format::StructHandleIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructDefinition",
+            "type2": "&file_format::StructFieldInformation"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::StructFieldInformation",
+            "type2": "$[file_format::FieldDefinition]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FieldDefinition",
+            "type2": "file_format::IdentifierIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FieldDefinition",
+            "type2": "&file_format::TypeSignature"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::TypeSignature",
+            "type2": "&file_format::SignatureToken"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "std::option::Option<&[file_format::FunctionDefinition]>"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::FunctionDefinition]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "&[file_format::FunctionDefinitionIndex]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionDefinition",
+            "type2": "file_format::FunctionHandleIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionDefinition",
+            "type2": "file_format::SignatureIndex"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionDefinition",
+            "type2": "&[file_format::StructDefinitionIndex]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionDefinition",
+            "type2": "std::option::Option<&[file_format::CodeUnit]>"
+        },
+        {
+            "kind": "Member",
+            "type1": "&file_format::FunctionDefinition",
+            "type2": "&[file_format::CodeUnit]"
+        },
+        {
+            "kind": "Member",
+            "type1": "&check_bounds::BoundsChecker",
+            "type2": "file_format::FunctionInstantiationIndex"
+        }
+    ]
+}
