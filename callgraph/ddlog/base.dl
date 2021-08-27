@@ -151,7 +151,8 @@ AllDataflowVia(node1, node3, node4) :- AllDataflowVia(node1, node2, node3), NotE
 // This is not guaranteed if an over-approximation of the call graph is used.
 output relation NotCheckedBy(node: NodeID, checker: NodeID)
 NotCheckedBy(node1, checker) :- NodeType(checker, Checker), ValidNode(node1), not Dataflow(node1, _).
-NotCheckedBy(node1, checker) :- NodeType(checker, Checker), DataflowNT(node1, node2), NotEqual(node2, checker).
+NotCheckedBy(node1, checker) :- NodeType(checker, Checker), DataflowNT(node1, node2), 
+                                NotEqual(node2, checker), not Dataflow(node2, _).
 NotCheckedBy(node1, checker) :- NodeType(checker, Checker), NodeType(node2, Exit), 
                                 Dataflow(node1, node2), DataflowNotVia(node1, checker, node2).
 
@@ -315,7 +316,8 @@ AllTypedDataflowVia(node1, node3, node4, t) :- AllTypedDataflowVia(node1, node2,
 output relation NotCheckedAtTypeBy(node: NodeID, checker: NodeID, t: TypeID)
 NotCheckedAtTypeBy(node1, checker, t) :- NodeType(checker, Checker), ValidNode(node1), ValidType(t), 
                                             not TypedDataflow(node1, _, t).
-NotCheckedAtTypeBy(node1, checker, t) :- NodeType(checker, Checker), TypedDataflowNT(node1, node2, t), NotEqual(node2, checker).
+NotCheckedAtTypeBy(node1, checker, t) :- NodeType(checker, Checker), TypedDataflowNT(node1, node2, t), 
+                                            NotEqual(node2, checker), not TypedDataflow(node2, _, t).
 NotCheckedAtTypeBy(node1, checker, t) :- NodeType(checker, Checker), NodeType(node2, Exit), 
                                             TypedDataflow(node1, node2, t), TypedDataflowNotVia(node1, checker, node2, t).
 
@@ -339,3 +341,18 @@ CheckedAtTypeBy(node, checker, t) :- CheckedAtTypeBy(node, checker, t2), Member(
 output relation NeverCheckedAtTypeBy(node: NodeID, checker: NodeID, t: TypeID)
 NeverCheckedAtTypeBy(node, checker, t) :- ValidNode(node), NodeType(checker, Checker), ValidType(t),
                                             not TypedDataflow(node, checker, t).
+
+
+// Checked type
+// All dataflow of type t are pass through the checker
+// There does not exist a dataflow of type t that does not pass through the checker
+output relation CheckedType(t: TypeID)
+CheckedType(t) :- ValidType(t), NodeType(checker, Checker), NodeType(exit, Exit), 
+    not TypedDataflowNotVia(_, checker, exit, t).
+
+
+// Not checked type
+// There exists a dataflow of type t that does not pass through the checker
+output relation NotCheckedType(t: TypeID)
+NotCheckedType(t) :- ValidType(t), NodeType(checker, Checker), NodeType(exit, Exit), 
+    TypedDataflowNotVia(_, checker, exit, t).
